@@ -1,0 +1,18 @@
+/*
+ * Add your dependencies here. Supported configurations:
+ *  - api("group:name:version:classifier"): if you use the types from this dependency in the public API of this mod
+ *  - implementation("g:n:v:c"): internal implementation details
+ *  - compileOnly("g:n:v:c"): compiletime only, e.g. for optional mods
+ *  - devOnlyNonPublishable("g:n:v:c"): RFG-deobfuscated dependencies or local testing
+ *  ...
+ *
+ * 附属（mcphone_browser）依赖说明：
+ *  - mcphone：编译期需要 api/IPhoneApp、api/PhoneApi、client/scene/PhoneUi 与 core/ItemPhone。
+ *    运行时由实例 mods 里的 mcphone-1.0.0.jar 提供，因此用 compileOnly。
+ *  - Qz-UILib：PhoneUi 场景树底层框架，同样 compileOnly（运行时由 qz_uilib-4.8.0.jar 提供）。
+ *  - WebDisplays/MCEF：全程反射调用（技术红线），不进编译期依赖。
+ */
+dependencies {
+    compileOnly(files(new File(rootDir, "libs/mcphone-1.0.0.jar").absolutePath))
+    compileOnly(files(new File(rootDir, "libs/qz_uilib-dev.jar").absolutePath))
+}

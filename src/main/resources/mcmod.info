@@ -1,0 +1,20 @@
+[
+{
+	"modid": "mcphone_browser",
+	"name": "MCphone Addon - Browser",
+	"description": "MCphone 附属：浏览器 App。前置依赖：WebDisplays (1.7.10) + MCEF。点击手机浏览器图标在面前生成网页大屏，支持隐藏/恢复、书签与历史。",
+	"version": "${modVersion}",
+	"mcversion": "${minecraftVersion}",
+	"url": "",
+	"updateUrl": "",
+	"authorList": ["november521"],
+	"credits": "",
+	"logoFile": "",
+	"screenshots": [],
+	"parent": "",
+	"requiredMods": ["mcphone"],
+	"dependencies": ["mcphone"],
+	"dependants": [],
+	"useDependencyInformation": true
+}
+]
