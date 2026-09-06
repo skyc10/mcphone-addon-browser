@@ -7,6 +7,19 @@ import cpw.mods.fml.relauncher.SideOnly;
 
 /**
  * net.montoyo.mcef.api.IBrowser 的反射包装（避免编译期依赖 MCEF）。
+ *
+ * <p>注入方法参数与 MCEF 0.7 的 {@code CefBrowserOsr} 实现对齐
+ * （内部构造 java.awt.event 事件）：</p>
+ * <ul>
+ * <li>{@code injectMouseMove(x, y, modifiers, focus)}：focus=false → MOUSE_MOVED，
+ *     true → MOUSE_EXITED（id 505）；</li>
+ * <li>{@code injectMouseButton(x, y, modifiers, button, pressed, clickCount)}：
+ *     button 为 AWT 编号（1=左 2=中 3=右）；</li>
+ * <li>{@code injectKeyXxx(char, modifiers)}：keyCode 恒为 0，char 才是有效载荷，
+ *     modifiers 传 0；</li>
+ * <li>{@code injectMouseWheel(x, y, modifiers, scrollAmount, wheelRotation)}：
+ *     rotation 正值=向下滚。</li>
+ * </ul>
  */
 @SideOnly(Side.CLIENT)
 public final class BrowserHandle {
@@ -100,43 +113,47 @@ public final class BrowserHandle {
         }
     }
 
+    /** focus=false → MOUSE_MOVED；true → MOUSE_EXITED。 */
     public void injectMouseMove(int x, int y, int modifiers, boolean focus) {
         try {
             injectMouseMove.invoke(browser, x, y, modifiers, focus);
         } catch (Throwable t) {}
     }
 
-    public void injectMouseButton(int x, int y, int btn, int count, boolean pressed, int modifiers) {
+    /** button 为 AWT 编号：1=左 2=中 3=右。 */
+    public void injectMouseButton(int x, int y, int modifiers, int button, boolean pressed, int clickCount) {
         try {
-            injectMouseButton.invoke(browser, x, y, btn, count, pressed, modifiers);
+            injectMouseButton.invoke(browser, x, y, modifiers, button, pressed, clickCount);
         } catch (Throwable t) {}
     }
 
-    /** (x, y, modifiers, scrollAmount, wheelRotation)；rotation 正值=向下滚。 */
+    /** rotation 正值=向下滚。 */
     public void injectMouseWheel(int x, int y, int modifiers, int scrollAmount, int rotation) {
         try {
             injectMouseWheel.invoke(browser, x, y, modifiers, scrollAmount, rotation);
         } catch (Throwable t) {}
     }
 
-    public void injectKeyPressed(char c, int key) {
+    /** modifiers 恒传 0（keyCode 在 MCEF 0.7 中无法表达）。 */
+    public void injectKeyPressed(char c, int modifiers) {
         try {
-            injectKeyPressed.invoke(browser, c, key);
+            injectKeyPressed.invoke(browser, c, modifiers);
         } catch (Throwable t) {}
     }
 
-    public void injectKeyTyped(char c, int key) {
+    public void injectKeyTyped(char c, int modifiers) {
         try {
-            injectKeyTyped.invoke(browser, c, key);
+            injectKeyTyped.invoke(browser, c, modifiers);
         } catch (Throwable t) {}
     }
 
-    public void injectKeyReleased(char c, int key) {
+    public void injectKeyReleased(char c, int modifiers) {
         try {
-            injectKeyReleased.invoke(browser, c, key);
+            injectKeyReleased.invoke(browser, c, modifiers);
         } catch (Throwable t) {}
     }
 
+    @SuppressWarnings("unused")
     public void runJS(String code) {
         try {
             runJS.invoke(browser, code, "");

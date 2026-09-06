@@ -1,6 +1,5 @@
 package com.november.mcphone.addon.browser.client;
 
-import net.minecraft.item.ItemStack;
 import net.minecraft.util.StatCollector;
 
 import com.november.mcphone.addon.browser.core.AddonStore;
@@ -31,8 +30,12 @@ public class BrowserApp implements IPhoneApp {
 
     private static BrowserApp instance;
 
-    /** 正在以「页面型」身份打开管理页（isDirectAction 短暂返回 false）。 */
-    private boolean openingPage;
+    /**
+     * 正在以「页面型」身份打开管理页（isDirectAction 短暂返回 false）。
+     * 必须是 static：services 自动发现与手动注册可能产生两个实例，
+     * 而 PhoneUi.openApp 按查表到的实例判断 isDirectAction——实例级标志会失效。
+     */
+    private static boolean openingPage;
 
     public BrowserApp() {
         instance = this;
@@ -71,9 +74,7 @@ public class BrowserApp implements IPhoneApp {
     @Override
     public boolean isDirectAction() {
         return !openingPage;
-    }
-
-    @Override
+    }    @Override
     public void onActivate(PhoneUi ui, boolean shift) {
         if (shift) {
             openManagementPage(ui);
@@ -97,29 +98,21 @@ public class BrowserApp implements IPhoneApp {
 
     /** 打开（或重建）管理页；供本 App 与 BrowserPages 在列表变更后刷新。 */
     static void openManagementPage(PhoneUi ui) {
-        BrowserApp app = instance != null ? instance : new BrowserApp();
-        app.openingPage = true;
+        openingPage = true;
         try {
-            ui.openApp(app.id());
+            ui.openApp("browser");
         } finally {
-            app.openingPage = false;
+            openingPage = false;
         }
     }
 
     /** 在管理页状态下重建页面（书签/历史增删后调用）。 */
     static void rebuildManagementPage(PhoneUi ui) {
-        BrowserApp app = instance;
-        if (app == null) return;
-        app.openingPage = true;
+        openingPage = true;
         try {
             ui.rebuildPage();
         } finally {
-            app.openingPage = false;
+            openingPage = false;
         }
-    }
-
-    /** 当前手机实例上的手机物品（客户端同步副本）。 */
-    static ItemStack phoneOf(PhoneUi ui) {
-        return ui.phoneStack();
     }
 }

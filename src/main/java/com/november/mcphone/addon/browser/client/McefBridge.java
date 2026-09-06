@@ -6,19 +6,21 @@ import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
 
 /**
- * MCEF 反射桥（虚拟浏览器大屏的唯一后端；不再使用 WebDisplays 方块）。
+ * MCEF 反射桥（虚拟浏览器大屏的唯一后端；不依赖 WebDisplays 方块）。
  *
- * <p>通过 net.montoyo.mcef.api.MCEFApi.getAPI() 拿到 API 实现者（MCEF.PROXY），
- * createBrowser(String) 走本附属给 MCEF 0.7 打的 default 方法桥接
- * （→ createBrowser(url, false)，与 MCEF 0.1 老语义一致）。</p>
+ * <p>通过 net.montoyo.mcef.api.MCEFApi.getAPI() 拿到 API 实现者（MCEF.PROXY）。
+ * createBrowser(String) 优先走本项目给 MCEF 0.7 打的 default 方法桥接
+ * （→ createBrowser(url, false)）；对未打补丁的原版 MCEF 0.7 自动回退到
+ * 双参 createBrowser(String, boolean)。</p>
  */
 @SideOnly(Side.CLIENT)
 public final class McefBridge {
 
     private static boolean detected;
     private static Object api;            // net.montoyo.mcef.api.API 实例
-    private static Method mCreate;        // createBrowser(String) -> IBrowser
-    private static Method mIsVirtual;     // isVirtual()
+    private static Method mCreate;        // createBrowser(String) 或 createBrowser(String, boolean)
+    private static boolean createTwoArg;  // true = 原版双参签名
+    private static Method mIsVirtual;     // isVirtual()（可缺省）
     private static String failReason = "";
 
     private McefBridge() {}
@@ -35,8 +37,21 @@ public final class McefBridge {
                 failReason = "MCEF PROXY is null (MCEF not initialized)";
                 return;
             }
-            mIsVirtual = api.getClass().getMethod("isVirtual");
-            mCreate = api.getClass().getMethod("createBrowser", String.class);
+            try {
+                mCreate = api.getClass().getMethod("createBrowser", String.class);
+                createTwoArg = false;
+            } catch (NoSuchMethodException e) {
+                // 未打补丁的原版 MCEF 0.7：createBrowser(String, boolean)
+                mCreate = api.getClass().getMethod("createBrowser", String.class, boolean.class);
+                createTwoArg = true;
+            }
+            try {
+                mIsVirtual = api.getClass().getMethod("isVirtual");
+            } catch (Throwable t) {
+                mIsVirtual = null; // 缺该方法时按「非虚拟」处理
+            }
+            System.out.println("[mcphone_browser] MCEF bridge ready (createBrowser "
+                + (createTwoArg ? "String,boolean" : "String") + ")");
         } catch (Throwable t) {
             api = null;
             failReason = String.valueOf(t);
@@ -44,15 +59,15 @@ public final class McefBridge {
         }
     }
 
-    /** MCEF 真实模式（非虚拟模式）且 API 可用。 */
+    /** MCEF 可用且非虚拟模式。 */
     public static boolean available() {
         detect();
         if (api == null) return false;
+        if (mIsVirtual == null) return true;
         try {
-            Object v = mIsVirtual.invoke(api);
-            return !Boolean.TRUE.equals(v);
+            return !Boolean.TRUE.equals(mIsVirtual.invoke(api));
         } catch (Throwable t) {
-            return false;
+            return true;
         }
     }
 
@@ -65,7 +80,7 @@ public final class McefBridge {
         detect();
         if (api == null) return null;
         try {
-            Object b = mCreate.invoke(api, url);
+            Object b = createTwoArg ? mCreate.invoke(api, url, Boolean.FALSE) : mCreate.invoke(api, url);
             return b == null ? null : new BrowserHandle(b);
         } catch (Throwable t) {
             System.err.println("[mcphone_browser] createBrowser failed: " + t);

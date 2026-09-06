@@ -2,8 +2,10 @@ package com.november.mcphone.addon.browser.core;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileWriter;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -100,8 +102,17 @@ public final class AddonStore {
     }
 
     private static void saveSettings() {
-        try (FileWriter w = new FileWriter(settingsFile(), false)) {
-            java.util.Map<String, String> m = new java.util.HashMap<>();
+        try (Writer w = new OutputStreamWriter(new FileOutputStream(settingsFile(), false), StandardCharsets.UTF_8)) {
+            // 合并：只覆盖本次真正改动的键，避免抹掉尚未加载进缓存的另一半配置
+            java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+            java.util.Map<?, ?> old = readSettings();
+            if (old != null) {
+                for (java.util.Map.Entry<?, ?> e : old.entrySet()) {
+                    if (e.getKey() instanceof String && e.getValue() instanceof String) {
+                        m.put((String) e.getKey(), (String) e.getValue());
+                    }
+                }
+            }
             if (home != null) m.put("home", home);
             if (lastUrl != null) m.put("lastUrl", lastUrl);
             GSON.toJson(m, w);
@@ -141,8 +152,8 @@ public final class AddonStore {
     public static synchronized List<Bookmark> bookmarks() {
         if (bookmarks == null) {
             bookmarks = load(bookmarksFile(), new TypeToken<List<Bookmark>>() {});
-            if (bookmarks == null || bookmarks.isEmpty()) {
-                // 首次使用（或书签为空）：预置默认书签（GTNH 中文 Wiki 首页）
+            if (bookmarks == null) {
+                // 仅在从未创建过书签文件时预置默认书签；玩家删光的空列表保持为空
                 bookmarks = new ArrayList<>();
                 Bookmark b = new Bookmark();
                 b.name = DEFAULT_BOOKMARK_NAME;
@@ -210,7 +221,8 @@ public final class AddonStore {
     }
 
     private static void save(File f, Object data) {
-        try (FileWriter w = new FileWriter(f, false)) {
+        // 统一 UTF-8 写盘（Java 17 + zh-CN Windows 默认 GBK，中文书签名必须显式 UTF-8）
+        try (Writer w = new OutputStreamWriter(new FileOutputStream(f, false), StandardCharsets.UTF_8)) {
             GSON.toJson(data, w);
         } catch (Exception e) {
             System.err.println("[mcphone_browser] Failed to save " + f.getName() + ": " + e);
