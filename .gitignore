@@ -19,3 +19,6 @@ run/
 
 # research artifacts (extracted trees, patched jars, downloads) - local only
 research/
+
+# MCEF mirror staging (large binaries, mirrored to GitHub releases) - local only
+mcef-mirror/
