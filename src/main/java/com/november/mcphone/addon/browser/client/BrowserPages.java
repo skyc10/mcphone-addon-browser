@@ -22,7 +22,8 @@ import cpw.mods.fml.relauncher.SideOnly;
 /**
  * 浏览器管理页（页面型场景树）：
  * URL 输入 + 「打开浏览器」、主页直达、书签列表（点直达/删）、历史（最近 20 条）。
- * MCEF 缺失时顶部显示前置缺失横幅；打开动作仍可用（BrowserScreen 内会显示错误）。
+ * MCEF 缺失或惰性初始化未完成时顶部显示提示横幅（不会在此页拉起 CEF）；
+ * 打开动作仍可用（BrowserScreen 内会显示错误/初始化结果）。
  *
  * <p>树一次性构建；变更（加/删书签等）经 {@link BrowserApp#rebuildManagementPage}
  * 重建整页（与 MCphone 便签页同模式）。</p>
@@ -41,14 +42,26 @@ final class BrowserPages {
         SceneNode page = scrollColumn();
         page.appendChild(PhoneUi.title(tr("app.mcphone_browser.browser")));
 
-        McefBridge.detect();
-        if (!McefBridge.available()) {
+        // 惰性初始化：管理页不拉起 CEF——仅在「初始化尚未成功」时提示；
+        // CEF 真正的初始化发生在首次打开全屏浏览器大屏（BrowserScreen）时。
+        if (McefLazyInit.initializationPending()) {
             SceneNode banner = new SceneNode();
-            banner.setText(tr("err.mcphone_browser.missing_mcef"));
+            String r = McefLazyInit.failReason();
+            banner.setText(r.isEmpty() ? tr("msg.mcphone_browser.lazy_init") : r);
             banner.setTextColor(COL_WARN);
             banner.setFontSize(PhoneUi.fs(14));
             banner.setHitTestable(false);
             page.appendChild(banner);
+        } else {
+            McefBridge.detect();
+            if (!McefBridge.available()) {
+                SceneNode banner = new SceneNode();
+                banner.setText(tr("err.mcphone_browser.missing_mcef"));
+                banner.setTextColor(COL_WARN);
+                banner.setFontSize(PhoneUi.fs(14));
+                banner.setHitTestable(false);
+                page.appendChild(banner);
+            }
         }
 
         // ============ URL 输入行 ============

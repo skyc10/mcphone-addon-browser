@@ -11,3 +11,4 @@ msg.mcphone_browser.no_history=还没有历史记录。
 err.mcphone_browser.missing_mcef=MCEF 浏览器内核不可用（需要 MCEF + CEF 真实模式）。
 err.mcphone_browser.create_failed=浏览器内核创建失败。
 err.mcphone_browser.no_url=请先输入网址。
+msg.mcphone_browser.lazy_init=浏览器内核将在首次打开时初始化（MCEF 惰性模式）。

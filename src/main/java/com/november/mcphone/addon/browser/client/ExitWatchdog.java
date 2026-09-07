@@ -17,10 +17,12 @@ import cpw.mods.fml.relauncher.SideOnly;
  * JVM 因这个非守护线程无法退出（日志最后停在 "Shutting down JCEF..."）。</p>
  *
  * <p>方案：本守护线程监视 Minecraft.running；其变 false（游戏真正退出）后，
+ * <b>仅当 CEF 已初始化</b>（玩家用过浏览器，或 MCEF 未被成功延迟）才介入：
  * 先关闭我们打开的浏览器，宽限 5 秒。之后进入安全判定循环（上限 60 秒）：
  * <b>只有「Client thread」主线程已消亡、且仍存在存活的 CEF/MCEF 家族非守护线程</b>
  * 时才 {@link Runtime#halt(int)}——主线程还在意味着退出保存尚未完成，绝不打断，
- * 避免砍断世界保存造成存档损坏。若主线程死后 CEF 线程也已退场，则交由 JVM 自然退出。</p>
+ * 避免砍断世界保存造成存档损坏。若主线程死后 CEF 线程也已退场，则交由 JVM 自然退出。
+ * CEF 从未初始化时看门狗不做任何动作（无 MCEF-Shutdown 线程可挂），直接收工。</p>
  */
 @SideOnly(Side.CLIENT)
 public final class ExitWatchdog {
@@ -65,6 +67,24 @@ public final class ExitWatchdog {
             } catch (InterruptedException e) {
                 return;
             }
+        }
+        // 条件化：CEF 从未初始化（玩家没用过浏览器，惰性初始化未触发）时
+        // 不存在 MCEF-Shutdown 线程，无需宽限/强杀——留 2 秒窗口容忍「正在
+        // 首次打开」的极端竞态，然后直接收工，让 JVM 自然退出。
+        boolean active = false;
+        for (int i = 0; i < 20 && !active; i++) {
+            active = McefLazyInit.isCefActive();
+            if (!active) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }
+        if (!active) {
+            System.out.println("[mcphone_browser] ExitWatchdog: CEF was never initialized, standing down");
+            return;
         }
         // 游戏已开始退出：关掉我们自己打开的浏览器，给正常清理留宽限期
         try {

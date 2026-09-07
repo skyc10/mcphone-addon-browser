@@ -126,6 +126,8 @@ public class BrowserScreen extends GuiScreen {
             created = true;
             String url = pendingUrl != null ? pendingUrl : AddonStore.home();
             addr.append(url);
+            // 惰性初始化触发点：detect() 内部会先执行 McefLazyInit.ensureInitialized()
+            // （首次打开浏览器 App 时在主线程拉起 CEF，失败/降级时 available()==false 走错误页）
             McefBridge.detect();
             if (McefBridge.available()) {
                 browser = McefBridge.create(url);

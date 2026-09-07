@@ -11,3 +11,4 @@ msg.mcphone_browser.no_history=No history yet.
 err.mcphone_browser.missing_mcef=MCEF browser engine unavailable (MCEF + CEF real mode required).
 err.mcphone_browser.create_failed=Failed to create the browser engine.
 err.mcphone_browser.no_url=Please enter a URL first.
+msg.mcphone_browser.lazy_init=The browser engine initializes on first open (MCEF lazy mode).

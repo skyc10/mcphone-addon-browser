@@ -27,6 +27,18 @@ public final class McefBridge {
 
     public static synchronized void detect() {
         if (detected) return;
+        // 惰性初始化：第一次触碰 MCEF API 时才真正拉起 CEF（本方法只会在玩家
+        // 打开浏览器大屏/管理页时于主线程被调用，与 MCEF 原本在 FML init 阶段
+        // 的执行线程一致）。初始化尚未成功（首次待执行/失败待重试）时不缓存
+        // 结果，以便下次打开时重新探测。
+        McefLazyInit.ensureInitialized();
+        if (McefLazyInit.initializationPending()) {
+            failReason = McefLazyInit.failReason().isEmpty()
+                ? "MCEF lazy init not completed yet"
+                : McefLazyInit.failReason();
+            System.out.println("[mcphone_browser] MCEF bridge: init pending (" + failReason + ")");
+            return;
+        }
         detected = true;
         try {
             ClassLoader cl = McefBridge.class.getClassLoader();
