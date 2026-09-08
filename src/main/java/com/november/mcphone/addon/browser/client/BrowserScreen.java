@@ -160,17 +160,27 @@ public class BrowserScreen extends GuiScreen {
     }
 
     /** 看门狗用：游戏退出时关掉还活着的浏览器。 */
+    /**
+     * 退出看门狗调用：异步关闭我们打开的浏览器。
+     *
+     * <p>close() 最终走到 JCEF 的 native n_Close，MC 主循环停止后 CEF 消息泵
+     * 已死，该调用会永久阻塞——绝不能在看门狗线程上同步执行（上一版就是这么
+     * 卡死看门狗、导致强杀逻辑永远没跑到的）。放到守护线程里，阻塞也只阻塞它
+     * 自己，不影响看门狗的扫描与强杀。</p>
+     */
     static void forceClose() {
         BrowserScreen s = current;
-        if (s != null) {
-            BrowserHandle b = s.browser;
-            if (b != null) {
-                s.browser = null;
-                try {
-                    b.close();
-                } catch (Throwable ignored) {}
-            }
+        if (s == null) {
+            return;
         }
+        BrowserHandle b = s.browser;
+        if (b == null) {
+            return;
+        }
+        s.browser = null;
+        Thread t = new Thread(() -> b.close(), "mcphone_browser-async-close");
+        t.setDaemon(true);
+        t.start();
     }
 
     // ===================== 渲染 =====================
