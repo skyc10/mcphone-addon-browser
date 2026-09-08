@@ -64,6 +64,17 @@ public final class McefBridge {
             }
             System.out.println("[mcphone_browser] MCEF bridge ready (createBrowser "
                 + (createTwoArg ? "String,boolean" : "String") + ")");
+            // 探测 MCEF 0.6/0.7 上游 bug 的特征：CefBrowserOsr 是否带 renderer_
+            // 字段（其 initialize() 在上游被孤儿化、纹理 id 恒 0）。存在则说明
+            // BrowserHandle 的纹理初始化兜底会生效。
+            try {
+                Class<?> osr = cl.loadClass("org.cef.browser.CefBrowserOsr");
+                osr.getDeclaredField("renderer_");
+                System.out.println("[mcphone_browser] OSR renderer texture-init shim armed");
+            } catch (Throwable t) {
+                System.out.println("[mcphone_browser] OSR renderer_ field absent ("
+                    + t.getClass().getSimpleName() + "), texture-init shim not needed/applicable");
+            }
         } catch (Throwable t) {
             api = null;
             failReason = String.valueOf(t);

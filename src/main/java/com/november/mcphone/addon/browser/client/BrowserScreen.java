@@ -40,6 +40,7 @@ public class BrowserScreen extends GuiScreen {
     private long lastUrlSync;
     private boolean lastInPage;
     private int pressedCefBtn = -1;
+    private long stuckSince; // textureId()==0 且 MCEF 可用的起始时刻（0=未计时）
 
     /** 当前打开的 BrowserScreen（供看门狗关闭）。 */
     private static BrowserScreen current;
@@ -182,6 +183,11 @@ public class BrowserScreen extends GuiScreen {
         drawRect(0, 0, this.width, BAR, 0xF02B2B2B);
 
         BrowserHandle b = browser;
+        if (b != null) {
+            // MCEF 上游 CefRenderer.initialize() 孤儿化兜底：Client thread 渲染
+            // 路径上有 GL context，是执行 glGenTextures 的安全时机（内部只跑一次）。
+            b.ensureRendererInitialized();
+        }
 
         // 后退 ◀ (6..24)
         drawRect(6, 5, 24, BAR - 5, b != null ? 0xFF4A4A4A : 0xFF383838);
@@ -249,6 +255,14 @@ public class BrowserScreen extends GuiScreen {
                 detail = createError;
             } else if (McefBridge.available()) {
                 msg = StatCollector.translateToLocal("msg.mcphone_browser.loading");
+                // 超时诊断：CEF 存活但纹理始终为 0 —— 兜底已跑过仍未生效，
+                // 提示可能是 MCEF 上游 bug（不自动重试，避免刷屏）。
+                long now = System.currentTimeMillis();
+                if (stuckSince == 0) {
+                    stuckSince = now;
+                } else if (now - stuckSince > 15000) {
+                    detail = StatCollector.translateToLocal("msg.mcphone_browser.texture_stuck");
+                }
             } else {
                 msg = StatCollector.translateToLocal("err.mcphone_browser.missing_mcef");
                 String r = McefBridge.failReason();

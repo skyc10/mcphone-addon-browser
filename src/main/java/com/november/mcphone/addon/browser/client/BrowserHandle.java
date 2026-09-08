@@ -1,5 +1,6 @@
 package com.november.mcphone.addon.browser.client;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import cpw.mods.fml.relauncher.Side;
@@ -30,6 +31,11 @@ public final class BrowserHandle {
     private final Method injectKeyPressed, injectKeyTyped, injectKeyReleased;
     private final Method runJS;
 
+    // ---- MCEF 上游纹理初始化兜底（见 initializeRenderer 注释） ----
+    private final Object renderer;          // CefRenderer 实例（探测失败为 null）
+    private final Method rendererInit;      // CefRenderer.initialize()（探测失败为 null）
+    private boolean rendererInitialized;    // 兜底 initialize() 是否已执行（含失败，只跑一次）
+
     BrowserHandle(Object browser) throws Exception {
         this.browser = browser;
         Class<?> c = browser.getClass();
@@ -42,12 +48,39 @@ public final class BrowserHandle {
         goForward = c.getMethod("goForward");
         getURL = c.getMethod("getURL");
         injectMouseMove = c.getMethod("injectMouseMove", int.class, int.class, int.class, boolean.class);
-        injectMouseButton = c.getMethod("injectMouseButton", int.class, int.class, int.class, int.class, boolean.class, int.class);
+        injectMouseButton = c.getMethod("injectMouseButton", int.class, int.class, int.class, boolean.class, int.class);
         injectMouseWheel = c.getMethod("injectMouseWheel", int.class, int.class, int.class, int.class, int.class);
         injectKeyPressed = c.getMethod("injectKeyPressed", char.class, int.class);
         injectKeyTyped = c.getMethod("injectKeyTyped", char.class, int.class);
         injectKeyReleased = c.getMethod("injectKeyReleased", char.class, int.class);
         runJS = c.getMethod("runJS", String.class, String.class);
+
+        // 探测 MCEF 0.6/0.7 上游 bug：CefRenderer.initialize()（glGenTextures 的唯一
+        // 赋值点）在上游被孤儿化、无任何调用者，导致纹理 id 恒 0、画面永远停在
+        // loading。这里只探测字段/方法是否存在并缓存，真正调用延迟到渲染线程
+        // （有 GL context 时）由 ensureRendererInitialized() 执行。
+        Object r = null;
+        Method init = null;
+        try {
+            Field rf = c.getDeclaredField("renderer_");
+            rf.setAccessible(true);
+            r = rf.get(browser);
+            if (r != null) {
+                init = r.getClass().getDeclaredMethod("initialize");
+                init.setAccessible(true);
+            }
+        } catch (Throwable t) {
+            // 其他 MCEF 版本（无 renderer_ 字段/initialize 方法）可能已自行修复，
+            // 打一行日志后不再尝试。
+            System.out.println("[mcphone_browser] renderer init shim not applicable: " + t);
+            r = null;
+            init = null;
+        }
+        renderer = r;
+        rendererInit = init;
+        if (r != null) {
+            System.out.println("[mcphone_browser] OSR renderer texture-init shim armed");
+        }
     }
 
     public void resize(int w, int h) {
@@ -75,12 +108,54 @@ public final class BrowserHandle {
         }
     }
 
-    /** 当前页面纹理 ID；未绘制首帧时为 0。 */
+    /**
+     * 当前页面纹理 ID；未绘制首帧时为 0。
+     *
+     * <p>MCEF 0.6/0.7 上游 bug 兜底：CefRenderer.initialize()（纹理 id 的唯一
+     * 赋值点 glGenTextures）在 MCEF jar 中无任何调用者，getTextureID() 恒 0。
+     * 首次在此读到 0 且兜底尚未执行时调用一次 initialize()。本方法只在
+     * BrowserScreen.drawScreen（Client thread 渲染路径，有 GL context）中被调用，
+     * 因此在这里执行 glGenTextures 是线程安全的。</p>
+     */
     public int textureId() {
         try {
-            return (Integer) getTextureID.invoke(browser);
+            int id = (Integer) getTextureID.invoke(browser);
+            if (id == 0) {
+                ensureRendererInitialized();
+                id = (Integer) getTextureID.invoke(browser);
+            }
+            return id;
         } catch (Throwable t) {
+            System.err.println("[mcphone_browser] getTextureID failed: " + t);
             return 0;
+        }
+    }
+
+    /**
+     * MCEF 上游纹理初始化兜底（反射调用 CefRenderer.initialize() 一次）。
+     *
+     * <p>调用时机约束：必须在持有 GL context 的线程上执行（glGenTextures 依赖
+     * 当前 context）。BrowserScreen.drawScreen 在 Client thread 渲染路径上调用
+     * 本方法与 {@link #textureId()}，满足约束。无论成败只执行一次：失败后不再
+     * 重试，避免每帧反射调用刷屏。</p>
+     */
+    void ensureRendererInitialized() {
+        if (rendererInitialized || rendererInit == null) {
+            return;
+        }
+        rendererInitialized = true;
+        try {
+            rendererInit.invoke(renderer);
+            int id = (Integer) getTextureID.invoke(browser);
+            if (id != 0) {
+                System.out.println("[mcphone_browser] CefRenderer.initialize() invoked (texture id=" + id + ")");
+            } else {
+                System.out.println(
+                    "[mcphone_browser] WARN: CefRenderer.initialize() invoked but texture id still 0"
+                        + " (GL context unavailable? giving up, no retry)");
+            }
+        } catch (Throwable t) {
+            System.err.println("[mcphone_browser] CefRenderer.initialize() failed: " + t);
         }
     }
 

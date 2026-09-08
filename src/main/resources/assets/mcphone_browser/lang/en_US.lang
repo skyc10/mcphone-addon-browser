@@ -6,6 +6,7 @@ btn.mcphone_browser.del=Del
 label.mcphone_browser.bookmarks=Bookmarks
 label.mcphone_browser.history=History
 msg.mcphone_browser.loading=Loading page...
+msg.mcphone_browser.texture_stuck=CEF alive but texture never initialized (MCEF upstream bug?)
 msg.mcphone_browser.no_bookmarks=No bookmarks yet.
 msg.mcphone_browser.no_history=No history yet.
 err.mcphone_browser.missing_mcef=MCEF browser engine unavailable (MCEF + CEF real mode required).

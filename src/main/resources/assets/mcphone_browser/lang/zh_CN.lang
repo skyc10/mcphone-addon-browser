@@ -6,6 +6,7 @@ btn.mcphone_browser.del=删
 label.mcphone_browser.bookmarks=书签
 label.mcphone_browser.history=历史记录
 msg.mcphone_browser.loading=正在加载页面…
+msg.mcphone_browser.texture_stuck=CEF 存活但纹理始终未初始化（MCEF 上游 bug？）
 msg.mcphone_browser.no_bookmarks=还没有书签。
 msg.mcphone_browser.no_history=还没有历史记录。
 err.mcphone_browser.missing_mcef=MCEF 浏览器内核不可用（需要 MCEF + CEF 真实模式）。
