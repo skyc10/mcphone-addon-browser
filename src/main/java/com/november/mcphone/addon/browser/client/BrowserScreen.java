@@ -2,10 +2,10 @@ package com.november.mcphone.addon.browser.client;
 
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
-import org.lwjgl.opengl.GL11;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.util.StatCollector;
 
 import com.november.mcphone.addon.browser.core.AddonStore;
@@ -29,17 +29,27 @@ public class BrowserScreen extends GuiScreen {
     private static final int BAR = 22;
 
     private volatile BrowserHandle browser;
-    private final StringBuilder addr = new StringBuilder();
+    /**
+     * 地址栏 = vanilla GuiTextField（唯一真源）。自带选中模型 + Ctrl+A/C/V/X
+     * （char 码 1/3/22/24）、Delete(211)/Home(199)/End(207)、Shift 选区、点击
+     * 定位——手写 StringBuilder 版缺失这些（Ctrl+A 的 char=1 被 >=32 过滤丢弃，
+     * 合成整串输入同理），是地址栏输入 bug 的根因。
+     */
+    private GuiTextField addrField;
     private boolean addressMode;
-    private int caret;
     private int viewW;
     private int viewH;
+    /** CEF 渲染视口（像素）。默认 = viewW/H × guiScale（物理分辨率，清晰）；
+     * 也可由用户手动指定固定高度档（720/1080/1440/2160）。 */
+    private int cefW;
+    private int cefH;
     private final String pendingUrl;
     private boolean created;
     private String createError;
     private long lastUrlSync;
     private boolean lastInPage;
     private int pressedCefBtn = -1;
+    private boolean clickDiagDone; // 首次页面点击诊断日志只打一次
     private long stuckSince; // textureId()==0 且 MCEF 可用的起始时刻（0=未计时）
 
     /** 当前打开的 BrowserScreen（供看门狗关闭）。 */
@@ -70,6 +80,32 @@ public class BrowserScreen extends GuiScreen {
         double k = Math.min(this.width * SCALE / 16.0, this.height * SCALE / 9.0);
         viewW = (int) Math.floor(k * 16.0);
         viewH = (int) Math.floor(k * 9.0);
+        computeCefSize();
+    }
+
+    /**
+     * CEF 渲染视口（像素）：
+     * <ul>
+     * <li>自适应（默认）：= 页面 GUI 尺寸 × GUI 缩放系数 = 物理像素数，
+     * 1 CEF 像素 ↔ 1 屏幕像素，最清晰；</li>
+     * <li>固定高度档（720/1080/1440/2160）：按 16:9 等比定宽，CEF 内部按此
+     * 分辨率排版/渲染，再缩放到 GUI 矩形上——高分档字更小更密（等效「缩小」
+     * 网页），低分档字更大（等效「放大」）。</li>
+     * </ul>
+     * 鼠标坐标注入前必须按 cefW/viewW、cefH/viewH 缩放。
+     */
+    private void computeCefSize() {
+        float guiScale = this.width > 0 && this.height > 0
+            ? (float) this.mc.displayWidth / this.width : 1f;
+        int mode = AddonStore.resolutionMode(); // 0=自适应, 否则=固定高度
+        if (mode <= 0) {
+            // 自适应：直接取页面矩形物理像素（clamp 到 16:9 双侧对齐）
+            cefW = Math.max(64, (int) Math.round(viewW * guiScale));
+            cefH = Math.max(36, (int) Math.round(viewH * guiScale));
+        } else {
+            cefH = mode;
+            cefW = Math.max(64, (int) Math.round((long) mode * 16 / 9.0));
+        }
     }
 
     private int boxX() {
@@ -86,7 +122,7 @@ public class BrowserScreen extends GuiScreen {
 
     // 工具栏按钮区（与绘制严格一致）
     private int ax0() {
-        return 50;
+        return 80; // 前面 50..76 让给了分辨率按钮（46..76）
     }
 
     private int ax1() {
@@ -103,6 +139,11 @@ public class BrowserScreen extends GuiScreen {
 
     private boolean inReload(int mx, int my) {
         return my >= 5 && my < BAR - 5 && mx >= 26 && mx < 44;
+    }
+
+    /** 分辨率按钮（刷新右侧、地址栏左侧）。 */
+    private boolean inResolution(int mx, int my) {
+        return my >= 5 && my < BAR - 5 && mx >= 46 && mx < 76;
     }
 
     private boolean inHome(int mx, int my) {
@@ -123,10 +164,19 @@ public class BrowserScreen extends GuiScreen {
     public void initGui() {
         super.initGui();
         computeSize();
+        // 地址栏控件：位置与 drawScreen 绘制的框一致(文字内缩 5px),无背景绘制
+        // (框由 drawRect 画),每次 initGui 重建(分辨率变化/重开 GUI)并保留文本。
+        String keep = addrField != null ? addrField.getText() : null;
+        addrField = new GuiTextField(fontRendererObj, ax0() + 5, 7, ax1() - ax0() - 10, BAR - 14);
+        addrField.setMaxStringLength(2048);
+        addrField.setEnableBackgroundDrawing(false);
+        addrField.setTextColor(0xFFFFFF);
+        addrField.setDisabledTextColour(0xB0C0D0);
+        addrField.setFocused(addressMode);
+        addrField.setText(keep != null ? keep : (pendingUrl != null ? pendingUrl : AddonStore.home()));
         if (!created) {
             created = true;
             String url = pendingUrl != null ? pendingUrl : AddonStore.home();
-            addr.append(url);
             // 惰性初始化触发点：detect() 内部会先执行 McefLazyInit.ensureInitialized()
             // （首次打开浏览器 App 时在主线程拉起 CEF，失败/降级时 available()==false 走错误页）
             McefBridge.detect();
@@ -135,13 +185,18 @@ public class BrowserScreen extends GuiScreen {
                 if (browser == null) {
                     createError = McefBridge.failReason();
                 } else {
-                    browser.resize(viewW, viewH);
+                    computeCefSize();
+                    browser.resize(cefW, cefH);
+                    // OSR 浏览器必须显式获焦，否则页面内点击/键盘输入可能被 CEF 忽略
+                    // （上游 JCEF 在 createBrowserIfRequired 里同样补 setFocus(true)）
+                    browser.setFocus(true);
                 }
             }
         } else {
             BrowserHandle b = browser;
             if (b != null) {
-                b.resize(viewW, viewH);
+                computeCefSize();
+                b.resize(cefW, cefH);
             }
         }
     }
@@ -194,9 +249,11 @@ public class BrowserScreen extends GuiScreen {
 
         BrowserHandle b = browser;
         if (b != null) {
-            // MCEF 上游 CefRenderer.initialize() 孤儿化兜底：Client thread 渲染
-            // 路径上有 GL context，是执行 glGenTextures 的安全时机（内部只跑一次）。
+            // 纹理初始化兜底（个别 MCEF 构建仍可能孤儿化 initialize()；内部只跑一次）
             b.ensureRendererInitialized();
+            // 帧泵：GTNH 下 MCEF 自带的 RenderTickEvent 泵不工作，onPaint 缓存的帧
+            // 永远等不到上传 → 在 GL 线程自驱动 N_DoMessageLoopWork + mcefUpdate
+            b.pumpFrameUpload();
         }
 
         // 后退 ◀ (6..24)
@@ -205,8 +262,13 @@ public class BrowserScreen extends GuiScreen {
         // 刷新 R (26..44)
         drawRect(26, 5, 44, BAR - 5, 0xFF4A4A4A);
         fontRendererObj.drawStringWithShadow("R", 32, 8, 0xFFFFFF);
+        // 分辨率 (46..76)：显示当前档位，点击循环 Auto→720→1080→1440→2160
+        String res = resLabel(AddonStore.resolutionMode());
+        drawRect(46, 5, 76, BAR - 5, 0xFF4A4A4A);
+        fontRendererObj.drawStringWithShadow(res, 74 - fontRendererObj.getStringWidth(res), 8, 0xB8E8B8);
 
-        // 地址栏 (50..ax1)
+        // 地址栏 (50..ax1)：框照旧手绘，文字/光标/选区全权交给 vanilla
+        // GuiTextField.drawTextBox（无背景模式文字画在 xPosition,yPosition）。
         int ax0 = ax0();
         int ax1 = ax1();
         drawRect(ax0, 4, ax1, BAR - 4, addressMode ? 0xFF141414 : 0xFF101010);
@@ -215,27 +277,17 @@ public class BrowserScreen extends GuiScreen {
         drawRect(ax0, 4, ax1, 5, 0xFF666666);
         drawRect(ax0, BAR - 5, ax1, BAR - 4, 0xFF666666);
 
-        // 非编辑态节流跟随真实 URL（页面跳转后同步）
+        // 非编辑态节流跟随真实 URL（页面跳转后同步）。setText 内部已把光标
+        // 移到末尾并等效清掉选区。
         if (!addressMode && b != null && System.currentTimeMillis() - lastUrlSync > 500) {
             lastUrlSync = System.currentTimeMillis();
             String cur = b.getURL();
-            if (cur != null && !cur.isEmpty() && !cur.equals(addr.toString())) {
-                addr.setLength(0);
-                addr.append(cur);
-                caret = addr.length();
+            if (cur != null && !cur.isEmpty() && !cur.equals(addrField.getText())) {
+                addrField.setText(cur);
             }
         }
-        String shown = addr.toString();
-        int maxW = ax1 - ax0 - 10;
-        while (fontRendererObj.getStringWidth(shown) > maxW && shown.length() > 1) {
-            shown = shown.substring(1);
-        }
-        int tx = ax0 + 5;
-        fontRendererObj.drawStringWithShadow(shown, tx, 8, addressMode ? 0xFFFFFF : 0xB0C0D0);
-        if (addressMode && (Minecraft.getSystemTime() / 500 & 1) == 0) {
-            int cw = fontRendererObj.getStringWidth(shown);
-            drawRect(tx + cw + 1, 7, tx + cw + 2, BAR - 7, 0xFFFFFF);
-        }
+        addrField.updateCursorCounter();
+        addrField.drawTextBox();
 
         // 主页 H (ax1+4..ax1+22) / 关闭 X (ax1+26..ax1+44) / 全屏 F (ax1+48..ax1+66)
         drawRect(ax1 + 4, 5, ax1 + 22, BAR - 5, 0xFF4A4A4A);
@@ -249,14 +301,14 @@ public class BrowserScreen extends GuiScreen {
         // ---- 页面区域 ----
         int bx = boxX();
         int by = boxY();
-        if (b != null && b.textureId() != 0) {
-            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glColor4f(1f, 1f, 1f, 1f);
-            b.draw(bx, by, bx + viewW, by + viewH);
-            GL11.glPopAttrib();
-            GL11.glColor4f(1f, 1f, 1f, 1f);
+        // cefViewWidth()>0 = 至少成功上传过一帧（纹理有内容）；==0 = textureId 非 0
+        // 但帧从未上传（空纹理=透明，正是 GTNH 症状）→ 走 loading/stuck 分支；
+        // ==-1 = 旧版 MCEF 无诊断字段，退回只看 textureId 的旧行为。
+        if (b != null && b.textureId() != 0 && b.cefViewWidth() != 0) {
+            stuckSince = 0;
+            // 自绘四边形（绕开 MCEF CefRenderer.render 的 UV 缺陷 + GLSM 状态风险，
+            // 显式关 alpha test/blend——详见 BrowserHandle.drawSelf 注释）
+            b.drawSelf(bx, by, bx + viewW, by + viewH);
         } else {
             String msg;
             String detail = null;
@@ -265,13 +317,15 @@ public class BrowserScreen extends GuiScreen {
                 detail = createError;
             } else if (McefBridge.available()) {
                 msg = StatCollector.translateToLocal("msg.mcphone_browser.loading");
-                // 超时诊断：CEF 存活但纹理始终为 0 —— 兜底已跑过仍未生效，
-                // 提示可能是 MCEF 上游 bug（不自动重试，避免刷屏）。
+                // 超时诊断：CEF 存活但帧始终没上屏。queue>0 = 帧在排队、上传环节
+                // 没跑；queue==0 = CEF 根本没产帧（页面没加载/渲染进程异常）。
                 long now = System.currentTimeMillis();
                 if (stuckSince == 0) {
                     stuckSince = now;
                 } else if (now - stuckSince > 15000) {
-                    detail = StatCollector.translateToLocal("msg.mcphone_browser.texture_stuck");
+                    detail = StatCollector.translateToLocal("msg.mcphone_browser.texture_stuck")
+                        + " [queue=" + (b != null ? b.queuedFrames() : -1)
+                        + " view=" + (b != null ? b.cefViewWidth() : -1) + "]";
                 }
             } else {
                 msg = StatCollector.translateToLocal("err.mcphone_browser.missing_mcef");
@@ -303,7 +357,7 @@ public class BrowserScreen extends GuiScreen {
     protected void keyTyped(char typedChar, int keyCode) {
         if (keyCode == 1) { // Esc
             if (addressMode) {
-                addressMode = false;
+                setEditMode(false);
                 return;
             }
             closeScreen();
@@ -314,34 +368,10 @@ public class BrowserScreen extends GuiScreen {
                 navigate();
                 return;
             }
-            if (keyCode == 14) { // Backspace
-                if (caret > 0) {
-                    addr.deleteCharAt(caret - 1);
-                    caret--;
-                }
-                return;
-            }
-            if (keyCode == 203 && caret > 0) { // Left
-                caret--;
-                return;
-            }
-            if (keyCode == 205 && caret < addr.length()) { // Right
-                caret++;
-                return;
-            }
-            if (keyCode == 47 && isCtrlKeyDown()) { // Ctrl+V（保留空格，仅去换行）
-                String clip = getClipboardString();
-                if (clip != null) {
-                    String clean = clip.replace("\r", "").replace("\n", "").trim();
-                    addr.insert(caret, clean);
-                    caret += clean.length();
-                }
-                return;
-            }
-            if (typedChar >= 32 && typedChar != 127) {
-                addr.insert(caret, typedChar);
-                caret++;
-            }
+            // 其余全权委托 vanilla textbox：Backspace/Delete、方向键、Home/End、
+            // Ctrl+A/C/V/X（char 码 1/3/22/24，手写版把这些当普通字符过滤掉）、
+            // Shift 选区、Ctrl+词跳转。粘贴文本经 ChatAllowedCharacters 过滤。
+            addrField.textboxKeyTyped(typedChar, keyCode);
             return;
         }
         // 页面模式：Pressed → (chr≠0 时) Typed；Released 由 handleKeyboardInput 补发。
@@ -368,8 +398,8 @@ public class BrowserScreen extends GuiScreen {
     }
 
     private void navigate() {
-        addressMode = false;
-        String url = addr.toString().trim();
+        setEditMode(false);
+        String url = addrField.getText().trim();
         if (url.isEmpty()) return;
         String norm = Urls.normalize(url);
         if (norm == null) return;
@@ -379,6 +409,12 @@ public class BrowserScreen extends GuiScreen {
         }
         AddonStore.addHistory(norm);
         AddonStore.setLastUrl(norm);
+    }
+
+    /** 进入/退出地址编辑态：焦点与 addressMode 单点同步。 */
+    private void setEditMode(boolean on) {
+        addressMode = on;
+        addrField.setFocused(on);
     }
 
     private void closeScreen() {
@@ -393,11 +429,36 @@ public class BrowserScreen extends GuiScreen {
         return mcBtn == 0 ? 1 : mcBtn == 1 ? 3 : 2;
     }
 
+    /**
+     * AWT 按钮 → {@code InputEvent.BUTTONx_DOWN_MASK}（左 1024 / 中 2048 / 右 4096）。
+     * JCEF 原生层经 {@code getModifiersEx} 读掩码判定按的是哪个按钮——恒传 0 会被
+     * 当成「无按钮按下」而整个点击被 Blink 忽略（页面点击无反应的根因）。
+     */
+    private static int toAwtMask(int awtBtn) {
+        return awtBtn == 1 ? 1024 : awtBtn == 3 ? 4096 : 2048;
+    }
+
+    /** GUI 页面坐标 → CEF 视口像素坐标（CEF 分辨率与 GUI 矩形尺寸解耦后必须缩放）。 */
+    private int cefX(int guiX) {
+        return (int) Math.round((guiX - boxX()) * (double) cefW / Math.max(1, viewW));
+    }
+
+    private int cefY(int guiY) {
+        return (int) Math.round((guiY - boxY()) * (double) cefH / Math.max(1, viewH));
+    }
+
     @Override
     protected void mouseClicked(int mx, int my, int btn) {
-        if (addressMode && !inAddressBar(mx, my)) {
-            addressMode = false;
+        // 地址栏点击：热区扩大到整个手绘框（控件矩形略窄，先判 inAddressBar 再
+        // 强制聚焦）；vanilla 负责按 x 定位 caret/选区。框外点击经 vanilla 的
+        // canLoseFocus 自动失焦（点击页面/工具栏都会退出编辑态）。
+        if (inAddressBar(mx, my)) {
+            addrField.mouseClicked(mx, my, btn);
+            addrField.setFocused(true);
+        } else {
+            addrField.mouseClicked(mx, my, btn);
         }
+        addressMode = addrField.isFocused();
         if (btn == 0) {
             if (inBack(mx, my)) {
                 BrowserHandle b = browser;
@@ -412,12 +473,12 @@ public class BrowserScreen extends GuiScreen {
                 }
                 return;
             }
-            if (inAddressBar(mx, my)) {
-                if (!addressMode) {
-                    addressMode = true;
-                    caret = addr.length();
-                }
+            if (inResolution(mx, my)) {
+                cycleResolution();
                 return;
+            }
+            if (inAddressBar(mx, my)) {
+                return; // 已由地址栏处理
             }
             if (inHome(mx, my)) {
                 navigateHome();
@@ -434,20 +495,31 @@ public class BrowserScreen extends GuiScreen {
         }
         BrowserHandle b = browser;
         if (inPage(mx, my) && b != null) {
-            addressMode = false;
             pressedCefBtn = toAwtButton(btn);
-            b.injectMouseButton(mx - boxX(), my - boxY(), 0, pressedCefBtn, true, 1);
+            int cx = cefX(mx);
+            int cy = cefY(my);
+            int mask = toAwtMask(pressedCefBtn);
+            // 一次性点击诊断：确认坐标缩放与按钮掩码真实到达 CEF（复测后可删）
+            if (!clickDiagDone) {
+                clickDiagDone = true;
+                System.out.println("[mcphone_browser] first click: gui=(" + (mx - boxX()) + ","
+                    + (my - boxY()) + ") cef=(" + cx + "," + cy + ") button=" + pressedCefBtn
+                    + " mask=" + mask + " cefViewport=" + cefW + "x" + cefH);
+            }
+            b.injectMouseButton(cx, cy, mask, pressedCefBtn, true, 1);
         }
     }
 
     @Override
     protected void mouseMovedOrUp(int mx, int my, int which) {
         if (which != -1) {
-            // 释放：无论是否仍在页面内都配对发送，避免 CEF 侧按键卡死
+            // 释放：无论是否仍在页面内都配对发送，避免 CEF 侧按键卡死。
+            // 掩码与按下时一致（JCEF native 按掩码识别按钮，release 传 0 同样失效）。
             if (pressedCefBtn != -1) {
                 BrowserHandle b = browser;
                 if (b != null) {
-                    b.injectMouseButton(mx - boxX(), my - boxY(), 0, pressedCefBtn, false, 1);
+                    b.injectMouseButton(cefX(mx), cefY(my), toAwtMask(pressedCefBtn),
+                        pressedCefBtn, false, 1);
                 }
                 pressedCefBtn = -1;
             }
@@ -468,27 +540,56 @@ public class BrowserScreen extends GuiScreen {
         boolean over = inPage(ex, ey);
         // focus=false → MOUSE_MOVED；true → MOUSE_EXITED（离开页面时补发一次）
         if (over || lastInPage) {
-            b.injectMouseMove(ex - boxX(), ey - boxY(), 0, !over);
+            b.injectMouseMove(cefX(ex), cefY(ey), 0, !over);
         }
         lastInPage = over;
         int wheel = Mouse.getEventDWheel();
         if (wheel != 0 && over) {
             // Java MouseWheelEvent：rotation 正值=向下；MC 正值=向上
             int rotation = wheel > 0 ? -1 : 1;
-            b.injectMouseWheel(ex - boxX(), ey - boxY(), 0, 120, rotation);
+            b.injectMouseWheel(cefX(ex), cefY(ey), 0, 120, rotation);
         }
     }
 
     private void navigateHome() {
         String home = AddonStore.home();
-        addr.setLength(0);
-        addr.append(home);
-        caret = addr.length();
+        addrField.setText(home);
+        addrField.setCursorPositionEnd();
         BrowserHandle b = browser;
         if (b != null) {
             b.loadURL(home);
         }
         AddonStore.addHistory(home);
         AddonStore.setLastUrl(home);
+    }
+
+    // ===================== 分辨率 =====================
+
+    /** 手动分辨率循环档：0=自适应（物理像素），其余=固定高度（按 16:9 定宽）。 */
+    private static final int[] RES_MODES = {0, 720, 1080, 1440, 2160};
+
+    private static String resLabel(int mode) {
+        return mode <= 0 ? "Auto" : String.valueOf(mode);
+    }
+
+    /** 循环切换分辨率档并立即应用到 CEF（resize 后 CEF 内部重排版重渲染）。 */
+    private void cycleResolution() {
+        int cur = AddonStore.resolutionMode();
+        int next = RES_MODES[0];
+        for (int i = 0; i < RES_MODES.length; i++) {
+            if (RES_MODES[i] == cur) {
+                next = RES_MODES[(i + 1) % RES_MODES.length];
+                break;
+            }
+        }
+        AddonStore.setResolutionMode(next);
+        computeCefSize();
+        BrowserHandle b = browser;
+        if (b != null) {
+            b.resize(cefW, cefH);
+            b.setFocus(true);
+        }
+        System.out.println("[mcphone_browser] resolution mode -> " + resLabel(next)
+            + " (cef viewport " + cefW + "x" + cefH + ", gui " + viewW + "x" + viewH + ")");
     }
 }

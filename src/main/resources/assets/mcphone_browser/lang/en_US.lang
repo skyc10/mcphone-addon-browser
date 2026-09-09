@@ -13,3 +13,5 @@ err.mcphone_browser.missing_mcef=MCEF browser engine unavailable (MCEF + CEF rea
 err.mcphone_browser.create_failed=Failed to create the browser engine.
 err.mcphone_browser.no_url=Please enter a URL first.
 msg.mcphone_browser.lazy_init=The browser engine initializes on first open (MCEF lazy mode).
+
+msg.mcphone_browser.res_hint=Resolution mode (Auto = physical pixels, number = fixed render height).

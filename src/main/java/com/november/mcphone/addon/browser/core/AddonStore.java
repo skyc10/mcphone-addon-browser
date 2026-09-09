@@ -115,6 +115,7 @@ public final class AddonStore {
             }
             if (home != null) m.put("home", home);
             if (lastUrl != null) m.put("lastUrl", lastUrl);
+            m.put("resolutionMode", String.valueOf(resolutionMode() >= 0 ? resolutionMode() : 0));
             GSON.toJson(m, w);
         } catch (Exception e) {
             System.err.println("[mcphone_browser] Failed to save settings.json: " + e);
@@ -144,6 +145,38 @@ public final class AddonStore {
     public static synchronized void setHome(String url) {
         if (url == null || url.isEmpty()) return;
         home = url;
+        saveSettings();
+    }
+
+    // ===================== 浏览器渲染分辨率 =====================
+
+    private static int resolutionMode = -1; // -1=未加载
+
+    /**
+     * CEF 渲染分辨率档：0=自适应（页面矩形物理像素，最清晰），
+     * 其余=固定渲染高度 720/1080/1440/2160（16:9 定宽）。
+     * settings.json 里以字符串存储（saveSettings 只写 String 值）。
+     */
+    public static synchronized int resolutionMode() {
+        if (resolutionMode < 0) {
+            int from = 0;
+            java.util.Map<?, ?> m = readSettings();
+            if (m != null && m.get("resolutionMode") instanceof String) {
+                try {
+                    from = Integer.parseInt((String) m.get("resolutionMode"));
+                } catch (NumberFormatException e) {
+                    from = 0;
+                }
+            }
+            resolutionMode = from;
+        }
+        return resolutionMode;
+    }
+
+    /** 设置分辨率档并持久化（非法值忽略）。 */
+    public static synchronized void setResolutionMode(int mode) {
+        if (mode != 0 && mode != 720 && mode != 1080 && mode != 1440 && mode != 2160) return;
+        resolutionMode = mode;
         saveSettings();
     }
 

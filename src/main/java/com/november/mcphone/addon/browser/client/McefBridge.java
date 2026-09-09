@@ -25,6 +25,27 @@ public final class McefBridge {
 
     private McefBridge() {}
 
+    /**
+     * CefApp 句柄（帧泵用）：从 MCEF proxy 反射 {@code getCefApp()}，Method 缓存
+     * （drawScreen 每帧调用，不能反复查表）。拿不到返回 null（泵帧降级为只调
+     * mcefUpdate）。
+     */
+    private static Method mGetCefApp;
+
+    public static Object cefAppHandle() {
+        if (api == null) {
+            return null;
+        }
+        try {
+            if (mGetCefApp == null) {
+                mGetCefApp = api.getClass().getMethod("getCefApp");
+            }
+            return mGetCefApp.invoke(api);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     public static synchronized void detect() {
         if (detected) return;
         // 惰性初始化：第一次触碰 MCEF API 时才真正拉起 CEF（本方法只会在玩家
