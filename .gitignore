@@ -22,3 +22,6 @@ research/
 
 # MCEF mirror staging (large binaries, mirrored to GitHub releases) - local only
 mcef-mirror/
+
+# agent-local workspace
+.zcode/
