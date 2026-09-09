@@ -1,0 +1,14 @@
+org.cef.* — Embedded from CCBlueX's java-cef fork (modern MCEF kernel).
+Source: https://github.com/CCBlueX/java-cef (branch: 26.2)
+Commit: b853a9d87fd0a7553001ce0785fee73d55be8d64
+Upstream: https://github.com/jcef-build/java-cef / CEF Java bindings (BSD, see LICENSE.txt in this directory).
+
+Modifications relative to upstream (marked with "MCEF-PORT:" comments):
+  - org/cef/browser/CefBrowserOsr.java: added the legacy net.montoyo.mcef
+    compatibility surface (protected CefRenderer renderer_, frame queue,
+    mcefUpdate(), legacy inject* entry points, draw/getTextureID/resize)
+    so that the montoyo-style client (mcphone-addon-browser) can drive the
+    browser without LWJGL/AWT dependencies.
+Natives (libcef.so / libjcef.so / jcef_helper) are NOT bundled; they are
+downloaded at runtime from the MCEF mirror infrastructure and loaded with
+System.load(absolute path).
