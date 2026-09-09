@@ -52,6 +52,8 @@ public class BrowserScreen extends GuiScreen {
     private boolean lastInPage;
     private int pressedCefBtn = -1;
     private boolean clickDiagDone; // 首次页面点击诊断日志只打一次
+    private boolean viewportAsserted; // 首帧后校验 CEF 视口并重断言 resize（每 browser 一次）
+    private boolean wheelDiagDone; // 首次滚轮诊断日志只打一次
     private long stuckSince; // textureId()==0 且 MCEF 可用的起始时刻（0=未计时）
 
     /** 当前打开的 BrowserScreen（供看门狗关闭）。 */
@@ -260,6 +262,25 @@ public class BrowserScreen extends GuiScreen {
             // 帧泵：GTNH 下 MCEF 自带的 RenderTickEvent 泵不工作，onPaint 缓存的帧
             // 永远等不到上传 → 在 GL 线程自驱动 N_DoMessageLoopWork + mcefUpdate
             b.pumpFrameUpload();
+
+            // 首帧视口校验：MCEF 0.6 的 resize() 直接 invokespecial N_WasResized
+            // （native），browser 异步创建完成前调用会被静默丢弃——initGui 里
+            // create 后立刻调的那次可能没生效，实际视口=创建默认尺寸。显示仍
+            // 正常（纹理被拉伸到 GUI 矩形），但点击坐标按错误比例缩放 → 落点
+            // 全错 → 「点击无反应」（键盘无坐标不受影响，与 beta.6 症状自洽）。
+            // 首帧上传后实际视口已确定，此时校验并重断言一次 resize。
+            if (!viewportAsserted && b.cefViewWidth() > 0) {
+                viewportAsserted = true;
+                int actualW = b.cefViewWidth();
+                int actualH = b.cefViewHeight();
+                if (actualW != cefW || actualH != cefH) {
+                    System.out.println("[mcphone_browser] viewport mismatch (actual "
+                        + actualW + "x" + actualH + " != expected " + cefW + "x" + cefH
+                        + ") — re-asserting resize");
+                    b.resize(cefW, cefH);
+                }
+                b.setFocus(true);
+            }
         }
 
         // 后退 ◀ (6..24)
@@ -528,7 +549,8 @@ public class BrowserScreen extends GuiScreen {
                 clickDiagDone = true;
                 System.out.println("[mcphone_browser] first click: gui=(" + (mx - boxX()) + ","
                     + (my - boxY()) + ") cef=(" + cx + "," + cy + ") button=" + pressedCefBtn
-                    + " mask=" + (mask | awtModifiers()) + " cefViewport=" + cefW + "x" + cefH);
+                    + " mask=" + (mask | awtModifiers()) + " cefViewport=" + cefW + "x" + cefH
+                    + " actualViewport=" + b.cefViewWidth() + "x" + b.cefViewHeight());
             }
             b.injectMouseButton(cx, cy, mask | awtModifiers(), pressedCefBtn, true, 1);
         }
@@ -571,6 +593,14 @@ public class BrowserScreen extends GuiScreen {
         if (wheel != 0 && over) {
             // Java MouseWheelEvent：rotation 正值=向下；MC 正值=向上
             int rotation = wheel > 0 ? -1 : 1;
+            // 一次性滚轮诊断：滚轮同样携带坐标，若滚轮有效而点击无效，
+            // 则「坐标缩放错」假设不成立（复测后可删）
+            if (!wheelDiagDone) {
+                wheelDiagDone = true;
+                System.out.println("[mcphone_browser] first wheel: cef=(" + cefX(ex) + ","
+                    + cefY(ey) + ") rotation=" + rotation + " actualViewport="
+                    + b.cefViewWidth() + "x" + b.cefViewHeight());
+            }
             b.injectMouseWheel(cefX(ex), cefY(ey), awtModifiers(), 120, rotation);
         }
     }

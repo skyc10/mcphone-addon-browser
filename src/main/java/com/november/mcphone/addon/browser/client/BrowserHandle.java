@@ -490,6 +490,18 @@ public final class BrowserHandle {
         }
     }
 
+    /** 渲染视口高（镜像 {@link #cefViewWidth()}，语义相同）。 */
+    public int cefViewHeight() {
+        if (viewHeightField == null || renderer == null) {
+            return -1;
+        }
+        try {
+            return viewHeightField.getInt(renderer);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
     public void loadURL(String url) {
         try {
             loadURL.invoke(browser, url);
