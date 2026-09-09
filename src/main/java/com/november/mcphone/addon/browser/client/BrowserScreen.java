@@ -16,11 +16,13 @@ import com.november.mcphone.addon.browser.core.Urls;
  * 顶部工具栏（后退/刷新/地址栏/主页/关闭/全屏）。页面纹理由 MCEF 离屏渲染，
  * 鼠标/键盘/滚轮注入 CEF。
  *
- * <p>注入约定（与 MCEF 0.7 CefBrowserOsr 对齐）：
- * 鼠标按钮为 AWT 编号（1=左 2=中 3=右）；injectMouseMove 的 focus=false 才是
- * MOUSE_MOVED（true=EXITED）；键盘 Pressed → (chr≠0 时) Typed → Released，
- * modifiers 恒 0。1.7.10 只在按下时回调 keyTyped，Released 在
- * handleKeyboardInput 里补发。</p>
+ * <p>注入约定（与 MCEF 0.6/0.7 CefBrowserOsr 对齐）：
+ * 鼠标按钮为 AWT 编号（1=左 2=中 3=右），modifiers 从 LWJGL 键状态实时算出
+ * （SHIFT 64 / CTRL 128 / ALT 512，native 经 getModifiersEx 读取）；injectMouseMove
+ * 的 focus=false 才是 MOUSE_MOVED（true=EXITED）；键盘 Pressed → (chr≠0 时) Typed
+ * → Released。1.7.10 只在按下时回调 keyTyped，Released 在 handleKeyboardInput
+ * 里补发。OSR 焦点在首帧上传/页面点击后重挂（create 时 native browser 尚未
+ * 建好，一次性 setFocus 会被静默丢弃）。</p>
  */
 public class BrowserScreen extends GuiScreen {
 
@@ -164,6 +166,9 @@ public class BrowserScreen extends GuiScreen {
     public void initGui() {
         super.initGui();
         computeSize();
+        // 退格/Delete/方向键长按连发（vanilla GuiChat 同款）。GuiScreen 默认关闭
+        // 键重复，地址栏「按住退格只能删一个字母」即源于此；onGuiClosed 恢复。
+        Keyboard.enableRepeatEvents(true);
         // 地址栏控件：位置与 drawScreen 绘制的框一致(文字内缩 5px),无背景绘制
         // (框由 drawRect 画),每次 initGui 重建(分辨率变化/重开 GUI)并保留文本。
         String keep = addrField != null ? addrField.getText() : null;
@@ -204,6 +209,7 @@ public class BrowserScreen extends GuiScreen {
     @Override
     public void onGuiClosed() {
         super.onGuiClosed();
+        Keyboard.enableRepeatEvents(false); // 与 initGui 的 enableRepeatEvents(true) 配对
         if (current == this) {
             current = null;
         }
@@ -353,6 +359,19 @@ public class BrowserScreen extends GuiScreen {
 
     // ===================== 键盘 =====================
 
+    /**
+     * 当前 AWT 修饰键掩码（从 LWJGL 键盘状态实时读取）。JCEF native 层经
+     * {@code KeyEvent.getModifiersEx} 读修饰键；恒传 0 会让 CEF 认为无修饰
+     * ——Shift+字符、Ctrl+V 等在页面内全部失效。无修饰键时返回 0。
+     */
+    private static int awtModifiers() {
+        int m = 0;
+        if (Keyboard.isKeyDown(42) || Keyboard.isKeyDown(54)) m |= 64;   // SHIFT_DOWN_MASK
+        if (Keyboard.isKeyDown(29) || Keyboard.isKeyDown(157)) m |= 128; // CTRL_DOWN_MASK
+        if (Keyboard.isKeyDown(56) || Keyboard.isKeyDown(184)) m |= 512; // ALT_DOWN_MASK
+        return m;
+    }
+
     @Override
     protected void keyTyped(char typedChar, int keyCode) {
         if (keyCode == 1) { // Esc
@@ -375,12 +394,13 @@ public class BrowserScreen extends GuiScreen {
             return;
         }
         // 页面模式：Pressed → (chr≠0 时) Typed；Released 由 handleKeyboardInput 补发。
-        // MCEF 0.7 的 keyCode 恒为 0，非字符键（方向键等）无法表达——接受此限制。
+        // MCEF 0.6/0.7 的 keyCode 恒为 0，非字符键（方向键等）无法表达——接受此限制。
         BrowserHandle b = browser;
         if (b != null) {
-            b.injectKeyPressed(typedChar, 0);
+            int mods = awtModifiers();
+            b.injectKeyPressed(typedChar, mods);
             if (typedChar != 0) {
-                b.injectKeyTyped(typedChar, 0);
+                b.injectKeyTyped(typedChar, mods);
             }
         }
     }
@@ -392,7 +412,7 @@ public class BrowserScreen extends GuiScreen {
         if (!addressMode && !Keyboard.getEventKeyState() && !Keyboard.isRepeatEvent()) {
             BrowserHandle b = browser;
             if (b != null) {
-                b.injectKeyReleased(Keyboard.getEventCharacter(), 0);
+                b.injectKeyReleased(Keyboard.getEventCharacter(), awtModifiers());
             }
         }
     }
@@ -495,6 +515,10 @@ public class BrowserScreen extends GuiScreen {
         }
         BrowserHandle b = browser;
         if (inPage(mx, my) && b != null) {
+            // OSR 焦点重挂：create 时 native browser 尚在异步创建，那时的一次性
+            // setFocus 很可能被丢弃——CEF 无焦点时点击/键盘事件被整体忽略
+            // （「页面点了没反应」主嫌疑）。点击瞬间补一次，成本可忽略。
+            b.setFocus(true);
             pressedCefBtn = toAwtButton(btn);
             int cx = cefX(mx);
             int cy = cefY(my);
@@ -504,9 +528,9 @@ public class BrowserScreen extends GuiScreen {
                 clickDiagDone = true;
                 System.out.println("[mcphone_browser] first click: gui=(" + (mx - boxX()) + ","
                     + (my - boxY()) + ") cef=(" + cx + "," + cy + ") button=" + pressedCefBtn
-                    + " mask=" + mask + " cefViewport=" + cefW + "x" + cefH);
+                    + " mask=" + (mask | awtModifiers()) + " cefViewport=" + cefW + "x" + cefH);
             }
-            b.injectMouseButton(cx, cy, mask, pressedCefBtn, true, 1);
+            b.injectMouseButton(cx, cy, mask | awtModifiers(), pressedCefBtn, true, 1);
         }
     }
 
@@ -518,7 +542,7 @@ public class BrowserScreen extends GuiScreen {
             if (pressedCefBtn != -1) {
                 BrowserHandle b = browser;
                 if (b != null) {
-                    b.injectMouseButton(cefX(mx), cefY(my), toAwtMask(pressedCefBtn),
+                    b.injectMouseButton(cefX(mx), cefY(my), toAwtMask(pressedCefBtn) | awtModifiers(),
                         pressedCefBtn, false, 1);
                 }
                 pressedCefBtn = -1;
@@ -540,14 +564,14 @@ public class BrowserScreen extends GuiScreen {
         boolean over = inPage(ex, ey);
         // focus=false → MOUSE_MOVED；true → MOUSE_EXITED（离开页面时补发一次）
         if (over || lastInPage) {
-            b.injectMouseMove(cefX(ex), cefY(ey), 0, !over);
+            b.injectMouseMove(cefX(ex), cefY(ey), awtModifiers(), !over);
         }
         lastInPage = over;
         int wheel = Mouse.getEventDWheel();
         if (wheel != 0 && over) {
             // Java MouseWheelEvent：rotation 正值=向下；MC 正值=向上
             int rotation = wheel > 0 ? -1 : 1;
-            b.injectMouseWheel(cefX(ex), cefY(ey), 0, 120, rotation);
+            b.injectMouseWheel(cefX(ex), cefY(ey), awtModifiers(), 120, rotation);
         }
     }
 

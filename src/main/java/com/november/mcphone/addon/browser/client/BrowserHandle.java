@@ -24,8 +24,9 @@ import net.minecraft.client.renderer.Tessellator;
  *     ——6 参。旧版误查 5 参签名 {@code (x, y, modifiers, button, pressed)}，
  *     NoSuchMethodException 使 BrowserHandle 构造失败、createBrowser 整体报
  *     「内核创建失败」（GTNH 实测根因）；</li>
- * <li>{@code injectKeyXxx(char, modifiers)}：keyCode 恒为 0，char 才是有效载荷，
- *     modifiers 传 0；</li>
+ * <li>{@code injectKeyXxx(char, modifiers)}：keyCode 恒为 0，char 才是有效载荷；
+ *     modifiers 由调用方从 LWJGL 键状态计算（SHIFT 64 / CTRL 128 / ALT 512），
+ *     native 层经 getModifiersEx 读取；</li>
  * <li>{@code injectMouseWheel(x, y, modifiers, scrollAmount, wheelRotation)}：
  *     rotation 正值=向下滚。</li>
  * </ul>
@@ -167,7 +168,10 @@ public final class BrowserHandle {
     /**
      * OSR 浏览器显式获焦。上游 JCEF 在 createBrowserIfRequired 里创建后必调
      * setFocus(true)；不调的话 CEF 收到点击/键盘事件但认为自己无焦点、直接忽略
-     * ——页面点击无反应的候选根因之一（与 modifiers=0 互相独立，两个都修）。
+     * ——「点击/键盘全灭」的头号嫌疑：createBrowser 返回时 native browser 尚在
+     * 异步创建，create 后立刻调的 setFocus 会落在 CEF 内部 browser 指针为空的
+     * 窗口期被静默丢弃。因此除了创建时，还要在首帧上传后、页面点击时重挂
+     * （见 BrowserScreen 三处调用点）。
      */
     public void setFocus(boolean focus) {
         if (setFocus == null) {
@@ -178,6 +182,12 @@ public final class BrowserHandle {
         } catch (Throwable t) {
             System.err.println("[mcphone_browser] setFocus failed: " + t);
         }
+    }
+
+    /** 首帧上传后应重挂一次焦点（browser 异步创建完毕，此时 setFocus 才真正生效）。 */
+    void onFirstFrameUploaded() {
+        System.out.println("[mcphone_browser] first frame uploaded — re-focusing browser");
+        setFocus(true);
     }
 
     /** CefRenderer 渲染页面四边形（绑定纹理、处理翻转）。 */
@@ -427,6 +437,7 @@ public final class BrowserHandle {
                 if (w > 0 && h > 0) {
                     firstFrameLogged = true;
                     System.out.println("[mcphone_browser] first frame uploaded (" + w + "x" + h + ")");
+                    onFirstFrameUploaded();
                 }
             }
         } catch (Throwable t) {
@@ -484,20 +495,28 @@ public final class BrowserHandle {
             loadURL.invoke(browser, url);
         } catch (Throwable t) {
             System.err.println("[mcphone_browser] loadURL failed: " + t);
+            return;
         }
+        // 跳转/刷新后 CEF 的焦点态会随新页面重置，重挂一次；地址栏编辑态下
+        // 不会走到这里（navigate() 先 setEditMode(false)）。
+        setFocus(true);
     }
 
     public void goBack() {
         try {
             goBack.invoke(browser);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("goBack", t);
+        }
     }
 
     @SuppressWarnings("unused")
     public void goForward() {
         try {
             goForward.invoke(browser);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("goForward", t);
+        }
     }
 
     public String getURL() {
@@ -508,12 +527,28 @@ public final class BrowserHandle {
         }
     }
 
+    // ===================== 输入注入 =====================
+
+    // 静默吞异常曾是排查期的坑：注入真失败时无任何日志。现在首次失败打一行
+    // WARN（含异常），后续静默——反射调用失败通常是持久性的，刷屏无益。
+    private boolean injectFailureLogged;
+
+    private void logInjectFailure(String what, Throwable t) {
+        if (!injectFailureLogged) {
+            injectFailureLogged = true;
+            System.err.println("[mcphone_browser] WARN: " + what
+                + " injection failed (further failures silent): " + t);
+        }
+    }
+
     /** focus=false → MOUSE_MOVED；true → MOUSE_EXITED。 */
     public void injectMouseMove(int x, int y, int modifiers, boolean focus) {
         if (injectMouseMove == null) return;
         try {
             injectMouseMove.invoke(browser, x, y, modifiers, focus);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("mouse move", t);
+        }
     }
 
     /** button 为 AWT 编号：1=左 2=中 3=右（modifiers, button, pressed, clickCount 顺序）。 */
@@ -521,7 +556,9 @@ public final class BrowserHandle {
         if (injectMouseButton == null) return;
         try {
             injectMouseButton.invoke(browser, x, y, modifiers, button, pressed, clickCount);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("mouse button", t);
+        }
     }
 
     /** rotation 正值=向下滚。 */
@@ -529,29 +566,44 @@ public final class BrowserHandle {
         if (injectMouseWheel == null) return;
         try {
             injectMouseWheel.invoke(browser, x, y, modifiers, scrollAmount, rotation);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("mouse wheel", t);
+        }
     }
 
-    /** modifiers 恒传 0（keyCode 在 MCEF 0.7 中无法表达）。 */
+    /**
+     * 键盘注入（MCEF 0.6/0.7 的 keyCode 恒为 0——非字符键无法表达）。
+     *
+     * <p>modifiers 传 AWT 修饰键掩码（native 层经 {@code KeyEvent.getModifiersEx}
+     * 读取，恒 0 会让 CEF 认为修饰键全松开）：LWJGL 的 Keyboard 键位算出
+     * SHIFT=64 / CTRL=128 / ALT=512（{@code InputEvent.SHIFT_DOWN_MASK} 等），
+     * 两手修饰键都查（LShift 42/RShift 54、LCtrl 29/RCtrl 157、LAlt 56/RAlt 184）。</p>
+     */
     public void injectKeyPressed(char c, int modifiers) {
         if (injectKeyPressed == null) return;
         try {
             injectKeyPressed.invoke(browser, c, modifiers);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("key pressed", t);
+        }
     }
 
     public void injectKeyTyped(char c, int modifiers) {
         if (injectKeyTyped == null) return;
         try {
             injectKeyTyped.invoke(browser, c, modifiers);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("key typed", t);
+        }
     }
 
     public void injectKeyReleased(char c, int modifiers) {
         if (injectKeyReleased == null) return;
         try {
             injectKeyReleased.invoke(browser, c, modifiers);
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("key released", t);
+        }
     }
 
     @SuppressWarnings("unused")
@@ -559,6 +611,8 @@ public final class BrowserHandle {
         if (runJS == null) return;
         try {
             runJS.invoke(browser, code, "");
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            logInjectFailure("runJS", t);
+        }
     }
 }
