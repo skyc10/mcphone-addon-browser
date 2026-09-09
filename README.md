@@ -21,8 +21,8 @@
 以下项目在 GTNH 2.9.0-beta-3 + MCEF 0.6 环境下**尚未完成实测**，欢迎按此清单反馈：
 
 1. **浏览器打开与渲染**：首次点击「览」图标，CEF 正常拉起、页面渲染出内容（beta.4 根因修复：帧上传链已验证完好，问题定位到**绘制侧**——`CefRenderer.render()` 自带路径在 Angelica GLSM 下整面透明，改为绕开它自绘正确 UV 的四边形并显式关闭 alpha test/blend；首次绘制会做一次纹理像素读回诊断，日志出现 `texture probe ... alpha0=N%`）
-2. **网页交互（beta.5 重点）**：鼠标移动/左中右键点击/滚轮/键盘输入是否全部生效。beta.5 修复点击无反应的根因——鼠标事件 modifiers 恒传 0，JCEF 原生层经 `getModifiersEx` 判定「无按钮按下」而整单忽略；现按 AWT `BUTTONx_DOWN_MASK` 传掩码（press/release 一致），并补上创建后 `setFocus(true)`。首次页面点击会打一行诊断日志 `first click: gui=(...) cef=(...) button=N mask=N cefViewport=WxH`
-3. **地址栏输入**：beta.3 换用 vanilla `GuiTextField`，应完整支持单击键入/IME 合成整串输入/Ctrl+A 全选/Ctrl+C 复制/Ctrl+V 粘贴/Ctrl+X 剪切/Delete/Home/End/Shift 选区/点击定位光标；若「合成整串输入」仍无效则属 lwjgl3ify/GLFW 层问题，请反馈
+2. **网页交互（beta.6 重点）**：鼠标移动/左中右键点击/滚轮/键盘输入是否全部生效。beta.5 的按钮掩码修复后点击仍无反应，beta.6 把根因收敛到 **OSR 焦点一次性丢失**：创建浏览器时 native browser 尚在异步创建，当时的 `setFocus(true)` 落在空窗期被静默丢弃——CEF 自认无焦点，点击/键盘事件被整体忽略。现改为**重挂式**：首帧上屏后（日志 `first frame uploaded — re-focusing browser`）、页面点击瞬间、每次 loadURL 后各补一次 `setFocus(true)`。另：修饰键改由 LWJGL 键状态实时计算（页面内 Shift+字符、Ctrl 组合不再恒为「无修饰」）；注入反射失败不再静默（首次失败打 `WARN: ... injection failed`）。首次页面点击仍有诊断日志 `first click: ...`
+3. **地址栏输入**：beta.3 换用 vanilla `GuiTextField`，应完整支持单击键入/IME 合成整串输入/Ctrl+A 全选/Ctrl+C 复制/Ctrl+V 粘贴/Ctrl+X 剪切/Delete/Home/End/Shift 选区/点击定位光标；**beta.6 修复退格长按不连删**（GuiScreen 默认关闭键重复，现 initGui 开启 `enableRepeatEvents(true)`、onGuiClosed 恢复，与 vanilla 聊天框一致）；若「合成整串输入」仍无效则属 lwjgl3ify/GLFW 层问题，请反馈
 4. **渲染分辨率（beta.5 新功能）**：默认「Auto」= 页面区域按物理像素渲染（1 CEF 像素 ↔ 1 屏幕像素，最清晰）；工具栏「分」按钮循环 Auto→720→1080→1440→2160（固定渲染高度，16:9 定宽，数字越大字越小越清晰、越小字越大越模糊），选择持久化到 `settings.json` 的 `resolutionMode`
 5. **退出进程清理**：打开过浏览器后退出游戏，进程应在 **约 5–95 秒内** 结束，无残留（对应修复：异步 close + 文件日志 + 90 秒 kill timer）
 6. **未用浏览器的退出**：从不打开浏览器 App 直接退出，进程应立即干净结束（看门狗静默收工）
