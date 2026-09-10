@@ -60,7 +60,10 @@ rm -rf <gamedir>/mcefmodern
 ### 3. 浏览器功能冒烟测试
 
 - 打开 addon 浏览器界面（`BrowserScreen`），确认页面渲染、纹理随滚动/刷新变化。
-- 输入测试：中文输入、退格、方向键、Ctrl 组合键（如 Ctrl+C/V）。
+- 输入测试：中文输入、退格、方向键（modern.3 起经 ByKeyCode 管道可用）、Ctrl 组合键（如 Ctrl+C/V）。
+- **modern.3 重点**：鼠标点击/滚轮、任意键盘输入在打开页面后立即生效（modern.2 及之前
+  因缺 GLFW 类全部静默失效——日志无报错但点击/打字无反应）；若输入仍失效，抓
+  `ClassNotFoundException: org.lwjgl.glfw.GLFW` 或 `N_SendMouseEvent` 相关日志反馈。
 - 鼠标测试：移动、左/中/右键、双击选中、滚轮平滑滚动。
 - 视频测试：`https://www.youtube.com` 播放（`--autoplay-policy=no-user-gesture-required` 已默认注入）。
 - JS 桥测试：依赖 `mcefQuery` 的查询回调（addon 的 JS 桥走 `mcefQuery`/`mcefCancel` 路由）。
@@ -78,8 +81,28 @@ rm -rf <gamedir>/mcefmodern
 
 退出世界/客户端时观察：浏览器逐一 `close(true)` → `runMessageLoopFor(100ms)` 排空消息 → `cefClient.dispose()`。反复开关浏览器界面 20 次，无 `MallocStackLogging`/`CHECK failed` 崩溃即为通过。
 
+## 输入注入与 GLFW stub（modern.3）
+
+**背景**：CEF 143 natives（`jcef.dll`/`libjcef.so`）的键鼠 JNI 桥入口全部以
+`ScopedJNIClass(env, "org/lwjgl/glfw/GLFW")` 开头，经 LaunchClassLoader 加载该类来
+`GetStaticFieldID` 读取 36 个 GLFW 常量（KEY_\*/MOD_\*/MOUSE_BUTTON_\*/PRESS/RELEASE/REPEAT）。
+GTNH 运行时是 LWJGL 3.4.2（3.4 起移除 GLFW 绑定）+ lwjgl3ify（无 GLFW 类）→
+`ClassNotFoundException: Class bytes are null for org.lwjgl.glfw.GLFW`，每帧
+`N_SendMouseEvent` 都抛异常且被静默吞掉（Java 侧只捕 `UnsatisfiedLinkError`）——
+渲染路径不经过这些类，所以「页面能看、输入全灭」。
+
+**修复**（modern.3）：
+
+- mod jar 内嵌 `org/lwjgl/glfw/GLFW` stub：纯常量 + 纯 Java `glfwGetKeyScancode()`
+  （IBM PC Set 1 映射），无 `<clinit>`、无 native 依赖，LaunchClassLoader 可直接载入。
+- `CefBrowserOsr` 的 `keyEvent()` helper 对齐上游 MCEFBrowser 契约：
+  `keyChar` 携带 GLFW 码（natives Win 分支靠 `getKeyChar()==GLFW_KEY_*` 识别特殊键取
+  扫描码），可打印字符仍保留原始值走 KEYEVENT_CHAR。
+- 非字符键（方向键/DEL/Home/End/PgUp/PgDn）经 `injectKeyXxxByKeyCode` 管道注入
+  （`remapKeycode` LWJGL→GLFW），旧内核「keyCode 恒 0 无法表达非字符键」的限制解除。
+
 ## 已知限制
 
 - 仅 linux_amd64 / windows_amd64；macOS 与 ARM 未编译对应 natives，检测到即进 VIRTUAL 模式。
 - 首启下载约 100-200MB，依赖网络；镜像不可达且无本地缓存时仅能 VIRTUAL。
-- beta 内核：`1.0.2-modern.1`。遇到问题请附日志中 `[MCEF]` 前缀的完整片段反馈。
+- beta 内核：`1.0.2-modern.3`。遇到问题请附日志中 `[MCEF]` 前缀的完整片段反馈。
