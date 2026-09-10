@@ -196,6 +196,15 @@ public final class BrowserHandle {
     void onFirstFrameUploaded() {
         System.out.println("[mcphone_browser] first frame uploaded — re-focusing browser");
         setFocus(true);
+        armDiagProbe();
+    }
+
+    /**
+     * modern.5 诊断探针：见 ClientProxy.DIAG_PROBE_JS。首帧与每次 loadURL 后
+     * 各调一次（脚本本身幂等，ClientProxy 的 loadEnd 钩子也会重挂）。
+     */
+    public void armDiagProbe() {
+        runJS(net.montoyo.mcef.client.ClientProxy.DIAG_PROBE_JS);
     }
 
     /** CefRenderer 渲染页面四边形（绑定纹理、处理翻转）。 */
@@ -520,6 +529,7 @@ public final class BrowserHandle {
         // 跳转/刷新后 CEF 的焦点态会随新页面重置，重挂一次；地址栏编辑态下
         // 不会走到这里（navigate() 先 setEditMode(false)）。
         setFocus(true);
+        armDiagProbe();
     }
 
     public void goBack() {

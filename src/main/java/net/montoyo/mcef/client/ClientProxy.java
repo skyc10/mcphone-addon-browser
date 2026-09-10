@@ -25,6 +25,7 @@ import org.cef.CefSettings;
 import org.cef.browser.CefBrowserOsr;
 import org.cef.browser.CefMessageRouter;
 import org.cef.handler.CefLifeSpanHandlerAdapter;
+import org.cef.handler.CefLoadHandlerAdapter;
 
 import net.minecraft.client.Minecraft;
 import net.montoyo.mcef.BaseProxy;
@@ -63,6 +64,34 @@ public class ClientProxy extends BaseProxy implements API {
 
     public static String ROOT;
     public static boolean VIRTUAL = false;
+
+    /**
+     * modern.5 诊断探针（发布版移除）：页面内 capture 阶段输入监听 + 左上角
+     * 计数浮层。注入事件若到达 renderer，数字立即跳动；数字不动 = 事件死在
+     * CEF host→renderer 路径。hasFocus() 直接验证 CEF 焦点假设。幂等。
+     */
+    public static final String DIAG_PROBE_JS = "(function(){try{"
+            + "if(!window.__mcefDiag){"
+            + "window.__mcefDiag={c:0,k:0,w:0,m:'-',f:'-'};"
+            + "var d=document.createElement('div');d.id='mcef-diag';"
+            + "d.style.cssText='position:fixed;left:2px;top:2px;z-index:2147483647;"
+            + "background:rgba(200,0,0,.85);color:#fff;font:12px monospace;"
+            + "padding:2px 6px;border-radius:3px;pointer-events:none;';"
+            + "(document.documentElement||document.body).appendChild(d);"
+            + "var up=function(){try{var s=window.__mcefDiag;"
+            + "d.textContent='MCEF-DIAG mdown='+s.c+' key='+s.k+' wheel='+s.w"
+            + "+' move='+s.m+' hasFocus='+s.f;}catch(x){}};"
+            + "document.addEventListener('mousedown',function(e){window.__mcefDiag.c++;up();},true);"
+            + "window.addEventListener('keydown',function(e){window.__mcefDiag.k++;up();},true);"
+            + "document.addEventListener('wheel',function(e){window.__mcefDiag.w++;up();},true);"
+            + "document.addEventListener('mousemove',function(e){window.__mcefDiag.m=e.clientX+','+e.clientY;"
+            + "window.__mcefDiag.f=document.hasFocus();up();},true);"
+            + "}"
+            + "var s=window.__mcefDiag;if(s){s.f=document.hasFocus();"
+            + "var d=document.getElementById('mcef-diag');"
+            + "if(d){d.textContent='MCEF-DIAG mdown='+s.c+' key='+s.k+' wheel='+s.w"
+            + "+' move='+s.m+' hasFocus='+s.f;}}"
+            + "}catch(e){try{document.title='DIAG-FAIL '+e;}catch(x){}}})();";
 
     /** Natives download progress for the addon UI: "", downloading, ready, "failed: <reason>". */
     public static volatile String NATIVES_STATUS = "";
@@ -200,6 +229,11 @@ public class ClientProxy extends BaseProxy implements API {
             ArrayList<String> switches = new ArrayList<String>();
             switches.add("--autoplay-policy=no-user-gesture-required");
             switches.add("--disable-web-security");
+            // modern.5 diagnostics: expose CDP (bisect trusted vs injected input)
+            // and write a verbose CEF/Chromium log next to the natives.
+            // 9333, not 9222: Windows WebView2 sometimes occupies 9222.
+            switches.add("--remote-debugging-port=9333");
+            switches.add("--remote-allow-origins=*");
 
             for(String a: MCEF.CEF_ARGS) {
                 if(a != null && !a.trim().isEmpty())
@@ -216,12 +250,27 @@ public class ClientProxy extends BaseProxy implements API {
             settings.background_color = settings.new ColorType(0, 255, 255, 255);
             settings.cache_path = new File(commitDir, "Cache").getAbsolutePath();
             settings.user_agent_product = "MCEF/2";
-            settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_WARNING;
+            // modern.5 diagnostics: INFO level captures Chromium's console
+            // messages ("INFO:CONSOLE(n)") and OSR input routing warnings in
+            // the log file; revert to LOGSEVERITY_WARNING for release builds.
+            settings.log_file = new File(commitDir, "cef-debug.log").getAbsolutePath();
+            settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_INFO;
 
             cefApp = CefApp.getInstance(switches.toArray(new String[switches.size()]), settings);
             cefClient = cefApp.createClient();
             cefRouter = CefMessageRouter.create(new CefMessageRouter.CefMessageRouterConfig("mcefQuery", "mcefCancel"));
             cefClient.addMessageRouter(cefRouter);
+
+            // modern.5 diagnostics: re-arm the page-side input probe on every
+            // main-frame load. The probe is idempotent; see BrowserHandle.
+            cefClient.addLoadHandler(new CefLoadHandlerAdapter() {
+                @Override
+                public void onLoadEnd(org.cef.browser.CefBrowser browser, org.cef.browser.CefFrame frame, int statusCode) {
+                    if(browser instanceof org.cef.browser.CefBrowserOsr && frame != null && frame.isMain()) {
+                        ((org.cef.browser.CefBrowserOsr) browser).runJS(DIAG_PROBE_JS, "");
+                    }
+                }
+            });
 
             displayHandler = new DisplayHandler();
             cefClient.addDisplayHandler(displayHandler);
