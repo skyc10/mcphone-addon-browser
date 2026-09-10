@@ -34,8 +34,8 @@ public final class GLFW {
     public static final int KEY_UP = 265;
     public static final int KEY_PAGE_UP = 266;
     public static final int KEY_PAGE_DOWN = 267;
-    public static final int KEY_HOME = 269;
-    public static final int KEY_END = 268;
+    public static final int KEY_HOME = 268;
+    public static final int KEY_END = 269;
     public static final int KEY_CAPS_LOCK = 280;
     public static final int KEY_SCROLL_LOCK = 281;
     public static final int KEY_NUM_LOCK = 282;
@@ -66,13 +66,19 @@ public final class GLFW {
     public static final int REPEAT = 2;
 
     /**
-     * Pure-Java stand-in for the native glfwGetKeyScancode, covering exactly
-     * the keys the fork's MapScanCodeGLFW routes here (BACKSPACE, KP_2/4/6/8,
-     * PRINT_SCREEN, SCROLL_LOCK, CAPS_LOCK, NUM_LOCK, PAUSE, INSERT); it
-     * returns 0 for anything else, which the natives handle like upstream.
+     * Pure-Java stand-in for the native glfwGetKeyScancode (IBM PC Set 1).
+     * Consumed two ways: MapScanCodeGLFW (CefBrowser_N.cpp) calls it over JNI
+     * for BACKSPACE/KP_2/4/6/8/PRINT_SCREEN/SCROLL_LOCK/CAPS_LOCK/NUM_LOCK/
+     * PAUSE/INSERT, and CefBrowserOsr.keyEvent() stores it in
+     * CefKeyEvent.scancode for the keys MapScanCodeGLFW passes through
+     * (TAB, ESCAPE are in neither its lookup nor its hardcoded tables, so
+     * the Windows bridge derives VkCode from this field). Returns 0 for
+     * anything else, which the natives handle like upstream.
      */
     public static int glfwGetKeyScancode(int key) {
         switch (key) {
+            case KEY_ESCAPE: return 1;
+            case KEY_TAB: return 15;
             case KEY_BACKSPACE: return 14;
             case KEY_KP_4: return 75;
             case KEY_KP_8: return 72;

@@ -592,7 +592,9 @@ public final class BrowserHandle {
     }
 
     /**
-     * 键盘注入（MCEF 0.6/0.7 的 keyCode 恒为 0——非字符键无法表达）。
+     * 键盘注入（字符路径，非字符键 c 传 '\0'）。方向键/Delete/Home/End 等
+     * 非字符键改走 {@link #injectKeyPressedByKeyCode(int, char, int)}——
+     * 旧 MCEF 0.6/0.7 没有 ByKeyCode 入口，非字符键无法表达。
      *
      * <p>modifiers 传 AWT 修饰键掩码（native 层经 {@code KeyEvent.getModifiersEx}
      * 读取，恒 0 会让 CEF 认为修饰键全松开）：LWJGL 的 Keyboard 键位算出

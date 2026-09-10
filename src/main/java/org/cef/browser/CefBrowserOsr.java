@@ -32,6 +32,7 @@ import org.cef.event.CefMouseWheelEvent;
 import org.cef.handler.CefRenderHandler;
 import org.cef.handler.CefScreenInfo;
 import org.cef.handler.CefAcceleratedPaintInfo;
+import org.lwjgl.glfw.GLFW;
 
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -93,10 +94,8 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
     // matching char again (historical MCEF "WORST_HACK").
     private static final HashMap<Integer, Character> WORST_HACK = new HashMap<>();
 
-    // GLFW action codes used by the fork's JNI bridge (org.lwjgl.glfw.GLFW
-    // is not on the 1.7.10 compile classpath, so the values are inlined).
-    private static final int GLFW_PRESS = 1;
-    private static final int GLFW_RELEASE = 0;
+    // org.lwjgl.glfw.GLFW here is the stub shipped in this jar (see that
+    // class); the fork's JNI bridge reads the very same constants at runtime.
 
     // AWT InputEvent _DOWN_MASK values sent by 1.7.10 embedders.
     private static final int AWT_SHIFT = 64;
@@ -143,46 +142,48 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
     }
 
     /**
-     * Maps control characters to the GLFW key codes the Linux JNI bridge
-     * recognizes (GLFW_KEY_ENTER/BACKSPACE/TAB/ESCAPE). Returns 0 for
-     * printable characters (the bridge then uses key_char directly).
+     * Maps control characters to the GLFW key codes the JNI bridges
+     * recognize (GLFW_KEY_ENTER/BACKSPACE/TAB/ESCAPE; Linux maps them to X
+     * keysyms, Windows derives scan codes). Returns 0 for printable
+     * characters (the bridges then use key_char directly).
      */
     private static int controlCharToGlfwKey(char c) {
         switch(c) {
         case '\n':
         case '\r':
-            return 257; // GLFW_KEY_ENTER
+            return GLFW.KEY_ENTER;
         case '\b':
-            return 259; // GLFW_KEY_BACKSPACE
+            return GLFW.KEY_BACKSPACE;
         case '\t':
-            return 258; // GLFW_KEY_TAB
+            return GLFW.KEY_TAB;
         case 27:
-            return 256; // GLFW_KEY_ESCAPE
+            return GLFW.KEY_ESCAPE;
         default:
             return 0;
         }
     }
 
     /**
-     * Maps 1.7.10 LWJGL Keyboard codes to GLFW key codes for the keys the
-     * Linux JNI bridge maps to X keysyms (navigational keys); everything
-     * else falls back to key_char on the native side.
+     * Maps 1.7.10 LWJGL Keyboard codes to GLFW key codes for the
+     * navigational keys both JNI bridges understand (Linux: X keysyms,
+     * Windows: scan-code tables); everything else falls back to key_char on
+     * the native side.
      */
     public static int remapKeycode(int kc) {
         switch(kc) {
-        case 28:  return 257; // KEY_RETURN  -> GLFW_KEY_ENTER
-        case 14:  return 259; // KEY_BACK    -> GLFW_KEY_BACKSPACE
-        case 211: return 261; // KEY_DELETE  -> GLFW_KEY_DELETE
-        case 208: return 264; // KEY_DOWN    -> GLFW_KEY_DOWN
-        case 200: return 265; // KEY_UP      -> GLFW_KEY_UP
-        case 203: return 263; // KEY_LEFT    -> GLFW_KEY_LEFT
-        case 205: return 262; // KEY_RIGHT   -> GLFW_KEY_RIGHT
-        case 15:  return 258; // KEY_TAB     -> GLFW_KEY_TAB
-        case 1:   return 256; // KEY_ESCAPE  -> GLFW_KEY_ESCAPE
-        case 201: return 266; // KEY_PRIOR   -> GLFW_KEY_PAGE_UP
-        case 209: return 267; // KEY_NEXT    -> GLFW_KEY_PAGE_DOWN
-        case 207: return 268; // KEY_END     -> GLFW_KEY_END
-        case 199: return 269; // KEY_HOME    -> GLFW_KEY_HOME
+        case 28:  return GLFW.KEY_ENTER;
+        case 14:  return GLFW.KEY_BACKSPACE;
+        case 211: return GLFW.KEY_DELETE;
+        case 208: return GLFW.KEY_DOWN;
+        case 200: return GLFW.KEY_UP;
+        case 203: return GLFW.KEY_LEFT;
+        case 205: return GLFW.KEY_RIGHT;
+        case 15:  return GLFW.KEY_TAB;
+        case 1:   return GLFW.KEY_ESCAPE;
+        case 201: return GLFW.KEY_PAGE_UP;
+        case 209: return GLFW.KEY_PAGE_DOWN;
+        case 207: return GLFW.KEY_END;
+        case 199: return GLFW.KEY_HOME;
 
         default:  return 0;
         }
@@ -464,7 +465,7 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         else
             m &= ~buttonMask;
 
-        CefMouseEvent ev = new CefMouseEvent(pressed ? GLFW_PRESS : GLFW_RELEASE, x, y, ccnt, glfwBtn, m);
+        CefMouseEvent ev = new CefMouseEvent(pressed ? GLFW.PRESS : GLFW.RELEASE, x, y, ccnt, glfwBtn, m);
         sendMouseEvent(ev);
     }
 
@@ -481,11 +482,20 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
      * {@code getKeyCode()}; upstream MCEFBrowser therefore always sends
      * {@code new CefKeyEvent(type, glfw, (char) glfw, mods)}. Printable chars
      * keep their own value so the KEYEVENT_CHAR path (windows_key_code =
-     * key_char on Windows) still carries the literal character.
+     * key_char on Windows) still carries the literal character. The
+     * {@code scancode} field mirrors upstream MCEFBrowser: it feeds
+     * MapScanCodeGLFW's fall-through for keys outside its lookup and
+     * hardcoded tables (TAB, ESCAPE).
      */
     private static CefKeyEvent keyEvent(int type, int glfw, char c, int mods) {
         char nativeChar = (glfw != 0) ? (char) glfw : c;
-        return new CefKeyEvent(type, glfw, nativeChar, mods);
+        CefKeyEvent ev = new CefKeyEvent(type, glfw, nativeChar, mods);
+        if(glfw != 0) {
+            // Leaving scancode 0 derives VkCode=0 on Windows and silently
+            // drops the key there.
+            ev.scancode = GLFW.glfwGetKeyScancode(glfw);
+        }
+        return ev;
     }
 
     /**
