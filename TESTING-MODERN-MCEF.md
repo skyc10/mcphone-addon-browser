@@ -60,7 +60,7 @@ rm -rf <gamedir>/mcefmodern
 ### 3. 浏览器功能冒烟测试
 
 - 打开 addon 浏览器界面（`BrowserScreen`），确认页面渲染、纹理随滚动/刷新变化。
-- 输入测试：中文输入、退格、方向键（modern.3 起经 ByKeyCode 管道可用）、Ctrl 组合键（如 Ctrl+C/V）。
+- 输入测试：中文输入、退格、方向键（modern.3 起经 ByKeyCode 管道可用）、Tab 焦点切换（modern.4 起 Windows 下修复）、Ctrl 组合键（如 Ctrl+C/V）。
 - **modern.3 重点**：鼠标点击/滚轮、任意键盘输入在打开页面后立即生效（modern.2 及之前
   因缺 GLFW 类全部静默失效——日志无报错但点击/打字无反应）；若输入仍失效，抓
   `ClassNotFoundException: org.lwjgl.glfw.GLFW` 或 `N_SendMouseEvent` 相关日志反馈。
@@ -81,7 +81,7 @@ rm -rf <gamedir>/mcefmodern
 
 退出世界/客户端时观察：浏览器逐一 `close(true)` → `runMessageLoopFor(100ms)` 排空消息 → `cefClient.dispose()`。反复开关浏览器界面 20 次，无 `MallocStackLogging`/`CHECK failed` 崩溃即为通过。
 
-## 输入注入与 GLFW stub（modern.3）
+## 输入注入与 GLFW stub（modern.3 / modern.4）
 
 **背景**：CEF 143 natives（`jcef.dll`/`libjcef.so`）的键鼠 JNI 桥入口全部以
 `ScopedJNIClass(env, "org/lwjgl/glfw/GLFW")` 开头，经 LaunchClassLoader 加载该类来
@@ -101,8 +101,17 @@ GTNH 运行时是 LWJGL 3.4.2（3.4 起移除 GLFW 绑定）+ lwjgl3ify（无 GL
 - 非字符键（方向键/DEL/Home/End/PgUp/PgDn）经 `injectKeyXxxByKeyCode` 管道注入
   （`remapKeycode` LWJGL→GLFW），旧内核「keyCode 恒 0 无法表达非字符键」的限制解除。
 
+**修复**（modern.4，并行代码审查跟进）：
+
+- `keyEvent()` 按上游契约填充 `CefKeyEvent.scancode`（`glfwGetKeyScancode`）。Tab/Escape
+  不在 natives 的扫描码查找与硬编码表内，此前 scancode=0 → VkCode=0，事件在 Windows 上被
+  静默丢弃（Linux 走 XK_Tab 不受影响）；页面内 Tab 焦点切换恢复。
+- stub 常量对齐官方 GLFW：`KEY_HOME=268`/`KEY_END=269`（原与官方互换；运行期行为不变，
+  `remapKeycode` 已同步引用 stub 常量）；`glfwGetKeyScancode` 扩展 TAB→15、ESCAPE→1。
+- `CefBrowserOsr` 内联 GLFW 字面量改为引用随 jar 发布的 stub（单一事实来源）。
+
 ## 已知限制
 
 - 仅 linux_amd64 / windows_amd64；macOS 与 ARM 未编译对应 natives，检测到即进 VIRTUAL 模式。
 - 首启下载约 100-200MB，依赖网络；镜像不可达且无本地缓存时仅能 VIRTUAL。
-- beta 内核：`1.0.2-modern.3`。遇到问题请附日志中 `[MCEF]` 前缀的完整片段反馈。
+- beta 内核：`1.0.2-modern.4`。遇到问题请附日志中 `[MCEF]` 前缀的完整片段反馈。
