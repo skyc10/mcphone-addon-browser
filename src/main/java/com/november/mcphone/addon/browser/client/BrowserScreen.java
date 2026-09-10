@@ -393,6 +393,31 @@ public class BrowserScreen extends GuiScreen {
         return m;
     }
 
+    /**
+     * LWJGL 键码能否经 ByKeyCode 管道表达——白名单必须与嵌入版
+     * {@code CefBrowserOsr.remapKeycode} 认识的键一致（LWJGL → GLFW），
+     * 其余键发过去会变成 keyCode=0/keyChar=0 的垃圾事件，直接不发。
+     */
+    private static boolean isExpressableNonCharKey(int keyCode) {
+        switch (keyCode) {
+            case 14:  // Backspace
+            case 15:  // Tab
+            case 28:  // Enter（小键盘）
+            case 199: // Home
+            case 200: // Up
+            case 201: // Page Up
+            case 203: // Left
+            case 205: // Right
+            case 207: // End
+            case 208: // Down
+            case 209: // Page Down
+            case 211: // Delete
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @Override
     protected void keyTyped(char typedChar, int keyCode) {
         if (keyCode == 1) { // Esc
@@ -414,13 +439,19 @@ public class BrowserScreen extends GuiScreen {
             addrField.textboxKeyTyped(typedChar, keyCode);
             return;
         }
-        // 页面模式：Pressed → (chr≠0 时) Typed；Released 由 handleKeyboardInput 补发。
-        // MCEF 0.6/0.7 的 keyCode 恒为 0，非字符键（方向键等）无法表达——接受此限制。
+        // 页面模式：字符/控制字符（\b \r \t，经 controlCharToGlfwKey 映射）走
+        // Pressed → Typed；非字符键（方向键/DEL/Home/翻页，character=0）走
+        // ByKeyCode 管道（嵌入版 remapKeycode → GLFW 码 → natives）。
+        // Released 由 handleKeyboardInput 补发。
         BrowserHandle b = browser;
         if (b != null) {
             int mods = awtModifiers();
-            b.injectKeyPressed(typedChar, mods);
-            if (typedChar != 0) {
+            if (typedChar == 0) {
+                if (isExpressableNonCharKey(keyCode)) {
+                    b.injectKeyPressedByKeyCode(keyCode, '\0', mods);
+                }
+            } else {
+                b.injectKeyPressed(typedChar, mods);
                 b.injectKeyTyped(typedChar, mods);
             }
         }
@@ -430,10 +461,19 @@ public class BrowserScreen extends GuiScreen {
     public void handleKeyboardInput() {
         super.handleKeyboardInput();
         // keyTyped 只在按下时回调；这里补发松开事件（修饰键/按键状态不残留）。
+        // 非字符键的释放走 ByKeyCode，与按下路径配对。
         if (!addressMode && !Keyboard.getEventKeyState() && !Keyboard.isRepeatEvent()) {
             BrowserHandle b = browser;
             if (b != null) {
-                b.injectKeyReleased(Keyboard.getEventCharacter(), awtModifiers());
+                char c = Keyboard.getEventCharacter();
+                if (c == 0) {
+                    int k = Keyboard.getEventKey();
+                    if (isExpressableNonCharKey(k)) {
+                        b.injectKeyReleasedByKeyCode(k, '\0', awtModifiers());
+                    }
+                } else {
+                    b.injectKeyReleased(c, awtModifiers());
+                }
             }
         }
     }

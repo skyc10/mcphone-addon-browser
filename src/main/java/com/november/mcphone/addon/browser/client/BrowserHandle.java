@@ -27,6 +27,9 @@ import net.minecraft.client.renderer.Tessellator;
  * <li>{@code injectKeyXxx(char, modifiers)}：keyCode 恒为 0，char 才是有效载荷；
  *     modifiers 由调用方从 LWJGL 键状态计算（SHIFT 64 / CTRL 128 / ALT 512），
  *     native 层经 getModifiersEx 读取；</li>
+ * <li>{@code injectKeyXxxByKeyCode(keyCode, char, modifiers)}：仅嵌入版
+ *     {@code CefBrowserOsr} 实现（LWJGL 键码经 remapKeycode 映射 GLFW 码），
+ *     是非字符键（方向键等）唯一表达通道；其他 MCEF 版本探测失败即静默降级；</li>
  * <li>{@code injectMouseWheel(x, y, modifiers, scrollAmount, wheelRotation)}：
  *     rotation 正值=向下滚。</li>
  * </ul>
@@ -42,6 +45,7 @@ public final class BrowserHandle {
     private final Method resize, close, draw, getTextureID, loadURL, goBack, goForward, getURL;
     private final Method injectMouseMove, injectMouseButton, injectMouseWheel;
     private final Method injectKeyPressed, injectKeyTyped, injectKeyReleased;
+    private final Method injectKeyPressedByKeyCode, injectKeyReleasedByKeyCode;
     private final Method setFocus;
     private final Method runJS;
 
@@ -79,6 +83,10 @@ public final class BrowserHandle {
         injectKeyPressed = probe(c, "injectKeyPressed", new Class<?>[]{char.class, int.class});
         injectKeyTyped = probe(c, "injectKeyTyped", new Class<?>[]{char.class, int.class});
         injectKeyReleased = probe(c, "injectKeyReleased", new Class<?>[]{char.class, int.class});
+        injectKeyPressedByKeyCode = probe(c, "injectKeyPressedByKeyCode",
+            new Class<?>[]{int.class, char.class, int.class});
+        injectKeyReleasedByKeyCode = probe(c, "injectKeyReleasedByKeyCode",
+            new Class<?>[]{int.class, char.class, int.class});
         setFocus = probe(c, "setFocus", new Class<?>[]{boolean.class});
         runJS = probe(c, "runJS", new Class<?>[]{String.class, String.class});
 
@@ -615,6 +623,32 @@ public final class BrowserHandle {
             injectKeyReleased.invoke(browser, c, modifiers);
         } catch (Throwable t) {
             logInjectFailure("key released", t);
+        }
+    }
+
+    /**
+     * 非字符键注入（方向键/DEL/HOME/翻页等，LWJGL 键码 1.7.10 侧有值而
+     * character=0）。仅嵌入版 {@code CefBrowserOsr} 实现了 ByKeyCode 管道
+     * （remapKeycode → GLFW 码 → natives）；探测失败（其他 MCEF 版本）则静默降级。
+     *
+     * <p>modifiers 与字符版相同（AWT 掩码，见 {@link #injectKeyPressed}）。</p>
+     */
+    public void injectKeyPressedByKeyCode(int keyCode, char c, int modifiers) {
+        if (injectKeyPressedByKeyCode == null) return;
+        try {
+            injectKeyPressedByKeyCode.invoke(browser, keyCode, c, modifiers);
+        } catch (Throwable t) {
+            logInjectFailure("key pressed (by code)", t);
+        }
+    }
+
+    /** 配对的非字符键释放注入（见 {@link #injectKeyPressedByKeyCode}）。 */
+    public void injectKeyReleasedByKeyCode(int keyCode, char c, int modifiers) {
+        if (injectKeyReleasedByKeyCode == null) return;
+        try {
+            injectKeyReleasedByKeyCode.invoke(browser, keyCode, c, modifiers);
+        } catch (Throwable t) {
+            logInjectFailure("key released (by code)", t);
         }
     }
 

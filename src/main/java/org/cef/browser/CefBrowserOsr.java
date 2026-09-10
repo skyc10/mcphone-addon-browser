@@ -475,21 +475,34 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
     }
 
     /**
+     * Builds a key event with the fork's native contract: MapScanCodeGLFW
+     * (CefBrowser_N.cpp, Windows) matches {@code getKeyChar()} against
+     * GLFW_KEY_* constants to derive scan codes, and the Linux bridge matches
+     * {@code getKeyCode()}; upstream MCEFBrowser therefore always sends
+     * {@code new CefKeyEvent(type, glfw, (char) glfw, mods)}. Printable chars
+     * keep their own value so the KEYEVENT_CHAR path (windows_key_code =
+     * key_char on Windows) still carries the literal character.
+     */
+    private static CefKeyEvent keyEvent(int type, int glfw, char c, int mods) {
+        char nativeChar = (glfw != 0) ? (char) glfw : c;
+        return new CefKeyEvent(type, glfw, nativeChar, mods);
+    }
+
+    /**
      * Char-first press entry point used by 1.7.10 embedders (mcphone_browser
      * bridge). Special keys arrive as '\0'; control characters are mapped to
-     * GLFW key codes so the Linux bridge produces proper X keysyms.
+     * GLFW key codes so the Linux bridge produces proper X keysyms and the
+     * Windows bridge derives the right scan code (see {@link #keyEvent}).
      */
     public void injectKeyPressed(char c, int mods) {
-        CefKeyEvent ev = new CefKeyEvent(CefKeyEvent.KEY_PRESS, controlCharToGlfwKey(c), c, awtToGlfwMods(mods));
-        sendKeyEvent(ev);
+        sendKeyEvent(keyEvent(CefKeyEvent.KEY_PRESS, controlCharToGlfwKey(c), c, awtToGlfwMods(mods)));
     }
 
     /**
      * Char-first release entry point (see {@link #injectKeyPressed}).
      */
     public void injectKeyReleased(char c, int mods) {
-        CefKeyEvent ev = new CefKeyEvent(CefKeyEvent.KEY_RELEASE, controlCharToGlfwKey(c), c, awtToGlfwMods(mods));
-        sendKeyEvent(ev);
+        sendKeyEvent(keyEvent(CefKeyEvent.KEY_RELEASE, controlCharToGlfwKey(c), c, awtToGlfwMods(mods)));
     }
 
     @Override
@@ -504,8 +517,7 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         if(glfw == 0)
             glfw = c; // native bridge falls back to key_char
 
-        CefKeyEvent ev = new CefKeyEvent(CefKeyEvent.KEY_PRESS, glfw, c, awtToGlfwMods(mods));
-        sendKeyEvent(ev);
+        sendKeyEvent(keyEvent(CefKeyEvent.KEY_PRESS, glfw, c, awtToGlfwMods(mods)));
     }
 
     @Override
@@ -521,8 +533,7 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         if(glfw == 0)
             glfw = c;
 
-        CefKeyEvent ev = new CefKeyEvent(CefKeyEvent.KEY_RELEASE, glfw, c, awtToGlfwMods(mods));
-        sendKeyEvent(ev);
+        sendKeyEvent(keyEvent(CefKeyEvent.KEY_RELEASE, glfw, c, awtToGlfwMods(mods)));
     }
 
     @Override
