@@ -151,13 +151,13 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         switch(c) {
         case '\n':
         case '\r':
-            return GLFW.KEY_ENTER;
+            return GLFW.GLFW_KEY_ENTER;
         case '\b':
-            return GLFW.KEY_BACKSPACE;
+            return GLFW.GLFW_KEY_BACKSPACE;
         case '\t':
-            return GLFW.KEY_TAB;
+            return GLFW.GLFW_KEY_TAB;
         case 27:
-            return GLFW.KEY_ESCAPE;
+            return GLFW.GLFW_KEY_ESCAPE;
         default:
             return 0;
         }
@@ -171,19 +171,19 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
      */
     public static int remapKeycode(int kc) {
         switch(kc) {
-        case 28:  return GLFW.KEY_ENTER;
-        case 14:  return GLFW.KEY_BACKSPACE;
-        case 211: return GLFW.KEY_DELETE;
-        case 208: return GLFW.KEY_DOWN;
-        case 200: return GLFW.KEY_UP;
-        case 203: return GLFW.KEY_LEFT;
-        case 205: return GLFW.KEY_RIGHT;
-        case 15:  return GLFW.KEY_TAB;
-        case 1:   return GLFW.KEY_ESCAPE;
-        case 201: return GLFW.KEY_PAGE_UP;
-        case 209: return GLFW.KEY_PAGE_DOWN;
-        case 207: return GLFW.KEY_END;
-        case 199: return GLFW.KEY_HOME;
+        case 28:  return GLFW.GLFW_KEY_ENTER;
+        case 14:  return GLFW.GLFW_KEY_BACKSPACE;
+        case 211: return GLFW.GLFW_KEY_DELETE;
+        case 208: return GLFW.GLFW_KEY_DOWN;
+        case 200: return GLFW.GLFW_KEY_UP;
+        case 203: return GLFW.GLFW_KEY_LEFT;
+        case 205: return GLFW.GLFW_KEY_RIGHT;
+        case 15:  return GLFW.GLFW_KEY_TAB;
+        case 1:   return GLFW.GLFW_KEY_ESCAPE;
+        case 201: return GLFW.GLFW_KEY_PAGE_UP;
+        case 209: return GLFW.GLFW_KEY_PAGE_DOWN;
+        case 207: return GLFW.GLFW_KEY_END;
+        case 199: return GLFW.GLFW_KEY_HOME;
 
         default:  return 0;
         }
@@ -465,7 +465,7 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         else
             m &= ~buttonMask;
 
-        CefMouseEvent ev = new CefMouseEvent(pressed ? GLFW.PRESS : GLFW.RELEASE, x, y, ccnt, glfwBtn, m);
+        CefMouseEvent ev = new CefMouseEvent(pressed ? GLFW.GLFW_PRESS : GLFW.GLFW_RELEASE, x, y, ccnt, glfwBtn, m);
         sendMouseEvent(ev);
     }
 
