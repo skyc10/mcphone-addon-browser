@@ -95,7 +95,14 @@ public final class McefLazyInit {
             onInit.invoke(realProxy);
             if (isVirtual()) {
                 initialized = false;
-                failReason = "MCEF fell back to virtual mode (CEF resources missing? will retry on next open)";
+                String status = clientProxyStaticString("NATIVES_STATUS");
+                if (status != null && status.equals("downloading")) {
+                    failReason = "CEF natives downloading in background (GitHub mirror) - reopen the browser in a moment";
+                } else if (status != null && status.startsWith("failed")) {
+                    failReason = "CEF natives download failed (" + status + ") - will retry on next open";
+                } else {
+                    failReason = "MCEF fell back to virtual mode (CEF resources missing? will retry on next open)";
+                }
                 System.err.println("[mcphone_browser] " + failReason);
             } else {
                 initialized = true;
@@ -145,5 +152,15 @@ public final class McefLazyInit {
             Field f = realProxy.getClass().getField("VIRTUAL");
             f.setBoolean(null, v);
         } catch (Throwable ignored) {}
+    }
+
+    /** Reads a public static String field off ClientProxy (e.g. NATIVES_STATUS); null if absent. */
+    private static String clientProxyStaticString(String field) {
+        try {
+            Field f = realProxy.getClass().getField(field);
+            return (String) f.get(null);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 }

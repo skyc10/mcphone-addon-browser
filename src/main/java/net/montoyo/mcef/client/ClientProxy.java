@@ -16,6 +16,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,19 +45,32 @@ import net.montoyo.mcef.virtual.VirtualBrowser;
  *  - Natives are resolved with System.load(absolute path) only (done inside
  *    CefApp.startup via the "jcef.path" system property); the legacy
  *    java.library.path / ClassLoader.usr_paths reflection hack is gone.
- *  - Natives are downloaded from the CCBlueX resource hosts
- *    (${host}/mcef-cef/<jcef-commit>/<platform>.tar.gz) and extracted with a
- *    dependency-free ustar parser into <gamedir>/mcefmodern/<commit>/.
- *  - Initialization is fully synchronous (called by the addon on first
- *    browser open); any failure flips {@link #VIRTUAL} to true and the addon
- *    retries next time.
+ *  - Natives are downloaded from the GitHub mirror first (release assets
+ *    windows_amd64.tar.gz / linux_amd64.tar.gz of skyc10/mcef-resources, tag
+ *    mcef-cef-<jcef-commit>), then from the CCBlueX resource hosts
+ *    (<host>/mcef-cef/<jcef-commit>/<platform> — NO .tar.gz suffix, the API
+ *    307-redirects to S3; checksum at <platform>/checksum) and extracted with
+ *    a dependency-free ustar parser into <gamedir>/mcefmodern/<commit>/.
+ *  - The download runs on a background daemon thread: onInit never blocks the
+ *    client thread (a 140+ MB fetch on the main thread freezes the game).
+ *    It flips VIRTUAL=true and the addon retries on the next browser open;
+ *    NATIVES_STATUS exposes the progress for the addon UI.
+ *  - When natives are already on disk (or the download finished), the rest of
+ *    the initialization is synchronous, as before; any failure flips
+ *    {@link #VIRTUAL} to true and the addon retries next time.
  */
 public class ClientProxy extends BaseProxy implements API {
 
     public static String ROOT;
     public static boolean VIRTUAL = false;
 
+    /** Natives download progress for the addon UI: "", downloading, ready, "failed: <reason>". */
+    public static volatile String NATIVES_STATUS = "";
+
     public static final String JCEF_COMMIT = readJcefCommit();
+    /** Release-asset base on our mirror repo; asset names are <platform>.tar.gz(.sha256). */
+    public static final String MIRROR_RELEASE_BASE =
+            "https://github.com/skyc10/mcef-resources/releases/download/mcef-cef-" + JCEF_COMMIT;
     public static final String DEFAULT_HOST = "https://api.liquidbounce.net/api/v3/resource";
     public static final String FALLBACK_HOST = "https://api.ccbluex.net/api/v3/resource";
     public static final String[] FALLBACK_HOSTS = new String[] {
@@ -148,8 +162,18 @@ public class ClientProxy extends BaseProxy implements API {
         // 1. Natives
         try {
             if(!haveNatives(platformDir, platform)) {
-                Log.info("MCEF natives not found; downloading CEF %s for %s...", JCEF_COMMIT, platform);
-                downloadNatives(commitDir, platform);
+                // Never block the client thread: a 140+ MB fetch on the main
+                // thread freezes the game. Kick off a background daemon thread
+                // (once) and let the addon retry on the next browser open.
+                if(DOWNLOAD_RUNNING.compareAndSet(false, true)) {
+                    Log.info("MCEF natives not found; downloading CEF %s for %s in background...", JCEF_COMMIT, platform);
+                    startAsyncNativesPrep(commitDir, platform);
+                } else {
+                    Log.info("MCEF natives download still running in background (%s)...", NATIVES_STATUS);
+                }
+
+                VIRTUAL = true;
+                return;
             } else
                 Log.info("MCEF natives found in %s", platformDir.getPath());
 
@@ -219,6 +243,37 @@ public class ClientProxy extends BaseProxy implements API {
         Log.info("MCEF initialized successfully.");
     }
 
+    private static final AtomicBoolean DOWNLOAD_RUNNING = new AtomicBoolean(false);
+
+    /**
+     * Downloads + verifies + extracts natives on a daemon thread, then primes
+     * "jcef.path". Never touches CEF itself (the caller retries onInit on the
+     * next browser open once haveNatives() passes). Updates NATIVES_STATUS so
+     * the addon UI can show progress instead of the game appearing frozen.
+     */
+    private static void startAsyncNativesPrep(File commitDir, String platform) {
+        NATIVES_STATUS = "downloading";
+        Thread t = new Thread(() -> {
+            try {
+                downloadNatives(commitDir, platform);
+                if(haveNatives(new File(commitDir, platform), platform)) {
+                    NATIVES_STATUS = "ready";
+                    Log.info("MCEF natives download finished; reopen the browser to start CEF.");
+                } else {
+                    NATIVES_STATUS = "failed: archive extracted but natives still missing";
+                    Log.error("MCEF natives download finished but natives are still missing");
+                }
+            } catch(Throwable th) {
+                NATIVES_STATUS = "failed: " + th;
+                Log.errorEx("MCEF natives background download failed", th);
+            } finally {
+                DOWNLOAD_RUNNING.set(false);
+            }
+        }, "MCEF-Natives-Download");
+        t.setDaemon(true);
+        t.start();
+    }
+
     private static String getPlatform() {
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String osArch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
@@ -264,9 +319,20 @@ public class ClientProxy extends BaseProxy implements API {
     }
 
     private static void downloadNatives(File commitDir, String platform) throws Exception {
-        String host = getHost();
         Exception last = null;
 
+        // 1) GitHub release-asset mirror (fast from mainland China, no TLS-SNI interference)
+        try {
+            downloadFromMirror(commitDir, platform);
+            return;
+        } catch(Exception e) {
+            Log.errorEx("Download from mirror %s failed", e, MIRROR_RELEASE_BASE);
+            last = e;
+        }
+
+        // 2) CCBlueX hosts as fallback (URL has NO .tar.gz suffix; the API
+        //    307-redirects to a signed S3 URL, HttpURLConnection follows it)
+        String host = getHost();
         String[] hosts = new String[FALLBACK_HOSTS.length + 1];
         hosts[0] = host;
         System.arraycopy(FALLBACK_HOSTS, 0, hosts, 1, FALLBACK_HOSTS.length);
@@ -284,18 +350,29 @@ public class ClientProxy extends BaseProxy implements API {
         throw (last != null) ? last : new Exception("No download host available");
     }
 
-    private static void downloadFrom(String host, File commitDir, String platform) throws Exception {
+    /** Mirror layout: <MIRROR_RELEASE_BASE>/<platform>.tar.gz and <platform>.tar.gz.sha256. */
+    private static void downloadFromMirror(File commitDir, String platform) throws Exception {
         Files.createDirectories(commitDir.toPath());
 
-        String base = host + "/mcef-cef/" + JCEF_COMMIT;
-        String archiveName = platform + ".tar.gz";
+        Path archive = new File(commitDir, platform + ".tar.gz").toPath();
+        Path checksumFile = new File(commitDir, platform + ".tar.gz.sha256").toPath();
 
-        Path archive = new File(commitDir, archiveName).toPath();
-        Path checksumFile = new File(commitDir, archiveName + ".sha256").toPath();
+        httpDownload(MIRROR_RELEASE_BASE + "/" + platform + ".tar.gz", archive);
+        httpDownload(MIRROR_RELEASE_BASE + "/" + platform + ".tar.gz.sha256", checksumFile);
+        verifyChecksum(archive, checksumFile);
 
-        httpDownload(base + "/" + archiveName, archive);
-        httpDownload(base + "/checksum", checksumFile);
+        // CCBlueX archives contain a <platform>/ prefix; extract into commitDir.
+        new TarExtractor(commitDir.toPath()).extractTarGz(archive);
 
+        try {
+            Files.deleteIfExists(archive);
+            Files.deleteIfExists(checksumFile);
+        } catch(Throwable t) {
+            Log.warning("Couldn't clean up downloaded archive: %s", t.toString());
+        }
+    }
+
+    private static void verifyChecksum(Path archive, Path checksumFile) throws Exception {
         // Verify sha256 (checksum file = bare 64-hex digest)
         String expected = new String(Files.readAllBytes(checksumFile), java.nio.charset.StandardCharsets.US_ASCII).trim();
         if(expected.length() != 64)
@@ -314,6 +391,22 @@ public class ClientProxy extends BaseProxy implements API {
             throw new Exception("SHA-256 mismatch: expected " + expected + ", got " + actual);
 
         Log.info("SHA-256 ok: %s", actual);
+    }
+
+    private static void downloadFrom(String host, File commitDir, String platform) throws Exception {
+        Files.createDirectories(commitDir.toPath());
+
+        String base = host + "/mcef-cef/" + JCEF_COMMIT;
+        // CCBlueX resource API serves the archive under the bare platform name
+        // (307 -> signed S3); "<platform>.tar.gz" is a 404 there.
+        String archiveName = platform;
+
+        Path archive = new File(commitDir, archiveName + ".tar.gz").toPath();
+        Path checksumFile = new File(commitDir, archiveName + ".checksum").toPath();
+
+        httpDownload(base + "/" + archiveName, archive);
+        httpDownload(base + "/checksum", checksumFile);
+        verifyChecksum(archive, checksumFile);
 
         // CCBlueX archives contain a <platform>/ prefix; extract into commitDir.
         new TarExtractor(commitDir.toPath()).extractTarGz(archive);

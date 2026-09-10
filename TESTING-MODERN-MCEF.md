@@ -22,15 +22,15 @@
 
 ## natives 下载与校验
 
-1. 启动后首次打开浏览器时（`ClientProxy.onInit()`，同步执行），检查 `<gamedir>/mcefmodern/<commit>/<platform>/` 是否已有全部必需库：
+1. 启动后首次打开浏览器时（`ClientProxy.onInit()`），检查 `<gamedir>/mcefmodern/<commit>/<platform>/` 是否已有全部必需库：
    - Linux：`libcef.so`、`libjcef.so`（另需 `jcef_helper` 可执行）。
    - Windows：`d3dcompiler_47.dll`、`libGLESv2.dll`、`libEGL.dll`、`chrome_elf.dll`、`libcef.dll`、`jcef.dll`。
-2. 缺失时按顺序尝试以下 host 下载 `<platform>.tar.gz` 与同名 `checksum`（sha256）：
-   - `https://api.liquidbounce.net/api/v3/resource`
-   - `https://api.ccbluex.net/api/v3/resource`
-   - `http://nossl.api.liquidbounce.net/api/v3/resource`
-   - 覆盖：JVM 参数 `-Dmcefmodern.host=https://your-mirror/...`（需按同样路径布局提供）。
-3. 下载后校验 sha256，用内置 ustar 解析器（`net.montoyo.mcef.compat.TarExtractor`，纯 Java，无新依赖）解压到 commit 目录，Linux 下自动 `chmod +x jcef_helper`。
+2. 已有库则直接初始化（同步，秒级）。**缺失时后台下载，主线程永不阻塞**：`onInit` 立即返回虚拟模式，浏览器界面会提示「CEF natives downloading in background - reopen the browser in a moment」，下载完成后再开一次浏览器即进入真实模式。下载线程是 daemon，进度见日志与 `ClientProxy.NATIVES_STATUS`（downloading / ready / failed: <原因>）。
+3. 下载顺序（`<platform>.tar.gz` + `.sha256`，sha256 校验后解压）：
+   - **首选镜像（本项目自建）**：`https://github.com/skyc10/mcef-resources/releases/download/mcef-cef-<commit>/<platform>.tar.gz`
+   - CCBlueX 官方源（后备）：`https://api.liquidbounce.net/api/v3/resource` 等 3 个 host，URL 为 `<host>/mcef-cef/<commit>/<platform>`（**无 .tar.gz 后缀**，API 307 跳转 S3；v1.0.2-modern.1 误带后缀导致 404，modern.2 已修）
+   - 覆盖：JVM 参数 `-Dmcefmodern.host=<host>`（按 CCBlueX 路径布局提供）。
+4. 手动预装：把对应平台 tar.gz 解压到 `<gamedir>/mcefmodern/<commit>/`（压缩包内自带 `<platform>/` 前缀目录），启动即免下载。
 
 ## 测试步骤
 
@@ -42,14 +42,15 @@ rm -rf <gamedir>/mcefmodern
 # 2) 放入 jar 后启动客户端，观察日志
 ```
 
-预期日志顺序（logger 前缀 `[MCEF]`）：
+预期日志顺序（logger 前缀 `[MCEF]`；下载在后台线程，主线程不卡）：
 
 ```text
 [MCEF] Loading MCEF (modern CEF kernel, jcef b853a9d87fd0a7553001ce0785fee73d55be8d64)
-[MCEF] MCEF natives not found; downloading CEF b853a9d... for linux_amd64...
-[MCEF] Downloading https://api.liquidbounce.net/api/v3/resource/mcef-cef/b853a9d87fd0a7553001ce0785fee73d55be8d64/linux_amd64.tar.gz ...
+[MCEF] MCEF natives not found; downloading CEF b853a9d... for linux_amd64 in background...
+[MCEF] Downloading https://github.com/skyc10/mcef-resources/releases/download/mcef-cef-b853a9d.../linux_amd64.tar.gz ...
 [MCEF] SHA-256 ok: c94345c923f163d6605652df9d23ed2c23849c2c2824d40930432ccdef21a00a
-[MCEF] MCEF initialized successfully.
+[MCEF] MCEF natives download finished; reopen the browser to start CEF.
+[MCEF] MCEF initialized successfully.   ← 重新打开浏览器后
 ```
 
 ### 2. 二次启动（缓存路径）
