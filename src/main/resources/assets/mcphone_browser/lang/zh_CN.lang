@@ -15,3 +15,13 @@ err.mcphone_browser.no_url=请先输入网址。
 msg.mcphone_browser.lazy_init=浏览器内核将在首次打开时初始化（MCEF 惰性模式）。
 
 msg.mcphone_browser.res_hint=分辨率档（Auto=物理像素，数字=固定渲染高度）。
+
+# P2-3/P2-4/P2-6 管理页
+label.mcphone_browser.add_bookmark=新增书签
+label.mcphone_browser.new_name=名称（可空）
+btn.mcphone_browser.add=添加书签
+btn.mcphone_browser.set_home=设为主页
+hint.mcphone_browser.set_home=设为主页（空=最近浏览的页面）
+msg.mcphone_browser.home_set=主页已更新。
+btn.mcphone_browser.clear_history=清空历史
+msg.mcphone_browser.bookmarked=已收藏：

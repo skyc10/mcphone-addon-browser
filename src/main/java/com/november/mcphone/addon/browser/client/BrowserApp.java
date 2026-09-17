@@ -3,7 +3,6 @@ package com.november.mcphone.addon.browser.client;
 import net.minecraft.util.StatCollector;
 
 import com.november.mcphone.addon.browser.core.AddonStore;
-import com.november.mcphone.addon.browser.core.PhoneNbt;
 import com.november.mcphone.api.IPhoneApp;
 import com.november.mcphone.client.scene.PhoneUi;
 
@@ -80,11 +79,10 @@ public class BrowserApp implements IPhoneApp {
             openManagementPage(ui);
             return;
         }
-        // 直达：打开全屏虚拟浏览器。URL 优先级：手机 NBT → 本地 lastUrl → 默认主页 Bing
-        String url = PhoneNbt.readLastUrl(ui.phoneStack());
-        if (url == null) {
-            url = AddonStore.lastUrl();
-        }
+        // 直达：打开全屏虚拟浏览器。URL 优先级：本地 lastUrl → 默认主页 Bing
+        //（P2-10：手机 NBT lastUrl 死分支已删——1.7.10 客户端无写入通道，
+        //  全仓无写入方，读到的恒 null。）
+        String url = AddonStore.lastUrl();
         if (url == null) {
             url = AddonStore.home();
         }

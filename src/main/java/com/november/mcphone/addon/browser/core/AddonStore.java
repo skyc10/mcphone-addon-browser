@@ -199,6 +199,14 @@ public final class AddonStore {
     }
 
     public static synchronized void addBookmark(String url) {
+        addBookmark(null, url);
+    }
+
+    /**
+     * P2-3：带名称加书签（管理页手动加）；name 空/null 自动取主机名。
+     * 同 URL 去重。
+     */
+    public static synchronized void addBookmark(String name, String url) {
         if (url == null || url.isEmpty()) return;
         List<Bookmark> list = bookmarks();
         for (Bookmark b : list) {
@@ -206,7 +214,7 @@ public final class AddonStore {
         }
         Bookmark b = new Bookmark();
         b.url = url;
-        b.name = hostOf(url);
+        b.name = (name == null || name.isEmpty()) ? hostOf(url) : name;
         list.add(b);
         save(bookmarksFile(), list);
     }
@@ -239,6 +247,20 @@ public final class AddonStore {
             list.remove(list.size() - 1);
         }
         save(historyFile(), list);
+    }
+
+    /** P2-6 删除单条历史（索引必须对应 {@link #history()} 当前快照；越界忽略）。 */
+    public static synchronized void removeHistory(int index) {
+        List<HistoryEntry> list = history();
+        if (index < 0 || index >= list.size()) return;
+        list.remove(index);
+        save(historyFile(), list);
+    }
+
+    /** P2-6 清空历史并落盘。 */
+    public static synchronized void clearHistory() {
+        history().clear();
+        save(historyFile(), history);
     }
 
     // ===================== 底层 =====================

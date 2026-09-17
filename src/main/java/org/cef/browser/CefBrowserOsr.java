@@ -184,6 +184,21 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         case 209: return GLFW.GLFW_KEY_PAGE_DOWN;
         case 207: return GLFW.GLFW_KEY_END;
         case 199: return GLFW.GLFW_KEY_HOME;
+        // P2-8: F1-F12 (LWJGL 59..68=F1..F10, 87=F11, 88=F12 -> GLFW
+        // GLFW_KEY_F1..F12). The natives consume these as GLFW_KEY_* fields /
+        // scancode inputs (MapScanCodeGLFW, CefBrowser_N.cpp).
+        case 59:  return GLFW.GLFW_KEY_F1;
+        case 60:  return GLFW.GLFW_KEY_F2;
+        case 61:  return GLFW.GLFW_KEY_F3;
+        case 62:  return GLFW.GLFW_KEY_F4;
+        case 63:  return GLFW.GLFW_KEY_F5;
+        case 64:  return GLFW.GLFW_KEY_F6;
+        case 65:  return GLFW.GLFW_KEY_F7;
+        case 66:  return GLFW.GLFW_KEY_F8;
+        case 67:  return GLFW.GLFW_KEY_F9;
+        case 68:  return GLFW.GLFW_KEY_F10;
+        case 87:  return GLFW.GLFW_KEY_F11;
+        case 88:  return GLFW.GLFW_KEY_F12;
 
         default:  return 0;
         }

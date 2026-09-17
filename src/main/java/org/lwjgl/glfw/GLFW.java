@@ -50,6 +50,19 @@ public final class GLFW {
     public static final int GLFW_KEY_NUM_LOCK = 282;
     public static final int GLFW_KEY_PRINT_SCREEN = 283;
     public static final int GLFW_KEY_PAUSE = 284;
+    /* Function keys (GLFW 290-301; P2-8 F1-F12 remap consumes these). */
+    public static final int GLFW_KEY_F1 = 290;
+    public static final int GLFW_KEY_F2 = 291;
+    public static final int GLFW_KEY_F3 = 292;
+    public static final int GLFW_KEY_F4 = 293;
+    public static final int GLFW_KEY_F5 = 294;
+    public static final int GLFW_KEY_F6 = 295;
+    public static final int GLFW_KEY_F7 = 296;
+    public static final int GLFW_KEY_F8 = 297;
+    public static final int GLFW_KEY_F9 = 298;
+    public static final int GLFW_KEY_F10 = 299;
+    public static final int GLFW_KEY_F11 = 300;
+    public static final int GLFW_KEY_F12 = 301;
     public static final int GLFW_KEY_KP_2 = 322;
     public static final int GLFW_KEY_KP_4 = 324;
     public static final int GLFW_KEY_KP_6 = 326;
@@ -99,6 +112,18 @@ public final class GLFW {
             case GLFW_KEY_NUM_LOCK: return 69;
             case GLFW_KEY_PAUSE: return 29;
             case GLFW_KEY_INSERT: return 82;
+            case GLFW_KEY_F1: return 59;
+            case GLFW_KEY_F2: return 60;
+            case GLFW_KEY_F3: return 61;
+            case GLFW_KEY_F4: return 62;
+            case GLFW_KEY_F5: return 63;
+            case GLFW_KEY_F6: return 64;
+            case GLFW_KEY_F7: return 65;
+            case GLFW_KEY_F8: return 66;
+            case GLFW_KEY_F9: return 67;
+            case GLFW_KEY_F10: return 68;
+            case GLFW_KEY_F11: return 87;
+            case GLFW_KEY_F12: return 88;
             default: return 0;
         }
     }

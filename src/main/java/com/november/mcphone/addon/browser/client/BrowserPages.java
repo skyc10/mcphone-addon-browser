@@ -15,6 +15,7 @@ import club.heiqi.uilib.ui.scene.runtime.SceneScrolls;
 import club.heiqi.uilib.ui.reactive.Signal;
 
 import com.november.mcphone.addon.browser.core.AddonStore;
+import com.november.mcphone.addon.browser.core.Urls;
 import com.november.mcphone.client.scene.PhoneUi;
 
 import cpw.mods.fml.relauncher.Side;
@@ -99,6 +100,12 @@ final class BrowserPages {
         appendButton(ui, homeRow, tr("btn.mcphone_browser.home"), () -> openUrl(ui, AddonStore.home()));
         page.appendChild(homeRow);
 
+        // ============ 设为主页（P2-4）：预填最近浏览 URL，可手输 ============
+        addHomeEditRow(ui, page);
+
+        // ============ 新增书签（P2-3 管理页手动加） ============
+        addBookmarkRow(ui, page);
+
         // ============ 书签 ============
         page.appendChild(sectionTitle(tr("label.mcphone_browser.bookmarks")));
 
@@ -115,16 +122,35 @@ final class BrowserPages {
             }));
         }
 
-        // ============ 历史 ============
-        page.appendChild(sectionTitle(tr("label.mcphone_browser.history")));
+        // ============ 历史（P2-6：单条删除 + 清空 + 时间） ============
+        SceneNode histHead = SceneNode.row();
+        histHead.setFillParentWidth(true);
+        histHead.setCrossAxisAlign(CrossAxisAlign.CENTER);
+        histHead.appendChild(sectionTitle(tr("label.mcphone_browser.history")));
+        SceneNode histSpacer = SceneNode.column();
+        histSpacer.setFlexGrow(1);
+        histSpacer.setHitTestable(false);
+        histHead.appendChild(histSpacer);
+        appendButton(ui, histHead, tr("btn.mcphone_browser.clear_history"), () -> ui.post(() -> {
+            AddonStore.clearHistory();
+            BrowserApp.rebuildManagementPage(ui);
+        }));
+        page.appendChild(histHead);
 
         List<AddonStore.HistoryEntry> hist = AddonStore.history();
         if (hist.isEmpty()) {
             page.appendChild(PhoneUi.muted(tr("msg.mcphone_browser.no_history")));
         }
         for (int i = 0; i < hist.size(); i++) {
+            final int hidx = i;
             AddonStore.HistoryEntry h = hist.get(i);
-            page.appendChild(historyRow(ui, h.url, () -> openUrl(ui, h.url)));
+            final String hts = histTimeString(h.ts);
+            page.appendChild(historyRow(ui, h.url, hts,
+                () -> openUrl(ui, h.url),
+                () -> {
+                    AddonStore.removeHistory(hidx);
+                    BrowserApp.rebuildManagementPage(ui);
+                }));
         }
 
         return page;
@@ -141,6 +167,94 @@ final class BrowserPages {
         }
         ui.closePhone();
         BrowserScreen.open(url);
+    }
+
+    // ===================== P2-4/P2-3 管理页行 =====================
+
+    /** P2-4 「设为主页」：预填最近浏览 URL，空输入 = 用最近浏览页。 */
+    private static void addHomeEditRow(PhoneUi ui, SceneNode page) {
+        Signal<String> homeValue = Signal.create(
+            AddonStore.lastUrl() != null ? AddonStore.lastUrl() : "");
+
+        SceneNode row = SceneNode.row();
+        row.setFillParentWidth(true);
+        row.setCrossAxisAlign(CrossAxisAlign.CENTER);
+        row.setGap(8);
+
+        SceneNode box = SceneNode.column();
+        box.setFlexGrow(1);
+        ui.runtime().mount(box, SceneTextInput.create(ui.runtime(), new SceneTextInput.Props(
+            homeValue, Signal.create(Boolean.TRUE), Signal.create(Boolean.FALSE),
+            tr("hint.mcphone_browser.set_home"), 2048,
+            SceneInputType.TEXT, homeValue::set))).getRoot();
+        row.appendChild(box);
+
+        SceneButton.Props props = new SceneButton.Props(
+            Signal.create(tr("btn.mcphone_browser.set_home")), Signal.create(Boolean.TRUE),
+            () -> ui.post(() -> {
+                String typed = homeValue.get() == null ? "" : homeValue.get().trim();
+                String url = typed.isEmpty() ? AddonStore.lastUrl() : Urls.normalize(typed);
+                if (url == null) {
+                    ui.toast(tr("err.mcphone_browser.no_url"));
+                    return;
+                }
+                AddonStore.setHome(url);
+                ui.toast(tr("msg.mcphone_browser.home_set"));
+            }),
+            SceneButtonVariant.PRIMARY);
+        ui.runtime().mount(row, SceneButton.create(ui.runtime(), props)).getRoot();
+        page.appendChild(row);
+    }
+
+    /** P2-3 「新增书签」：名称可空（自动取主机名）、URL 空 = 最近浏览页。 */
+    private static void addBookmarkRow(PhoneUi ui, SceneNode page) {
+        Signal<String> nameValue = Signal.create("");
+        Signal<String> urlValue = Signal.create("");
+
+        SceneNode row = SceneNode.row();
+        row.setFillParentWidth(true);
+        row.setCrossAxisAlign(CrossAxisAlign.CENTER);
+        row.setGap(8);
+
+        SceneNode nameBox = SceneNode.column();
+        nameBox.setFlexGrow(1);
+        ui.runtime().mount(nameBox, SceneTextInput.create(ui.runtime(), new SceneTextInput.Props(
+            nameValue, Signal.create(Boolean.TRUE), Signal.create(Boolean.FALSE),
+            tr("label.mcphone_browser.new_name"), 64,
+            SceneInputType.TEXT, nameValue::set))).getRoot();
+        row.appendChild(nameBox);
+
+        SceneNode urlBox = SceneNode.column();
+        urlBox.setFlexGrow(2);
+        ui.runtime().mount(urlBox, SceneTextInput.create(ui.runtime(), new SceneTextInput.Props(
+            urlValue, Signal.create(Boolean.TRUE), Signal.create(Boolean.FALSE),
+            tr("label.mcphone_browser.url"), 2048,
+            SceneInputType.TEXT, urlValue::set))).getRoot();
+        row.appendChild(urlBox);
+
+        SceneButton.Props props = new SceneButton.Props(
+            Signal.create(tr("btn.mcphone_browser.add")), Signal.create(Boolean.TRUE),
+            () -> ui.post(() -> {
+                String typed = urlValue.get() == null ? "" : urlValue.get().trim();
+                String url = typed.isEmpty() ? AddonStore.lastUrl() : Urls.normalize(typed);
+                if (url == null) {
+                    ui.toast(tr("err.mcphone_browser.no_url"));
+                    return;
+                }
+                String name = nameValue.get() == null ? "" : nameValue.get().trim();
+                AddonStore.addBookmark(name.isEmpty() ? null : name, url);
+                BrowserApp.rebuildManagementPage(ui);
+                ui.toast(tr("msg.mcphone_browser.bookmarked"));
+            }),
+            SceneButtonVariant.PRIMARY);
+        ui.runtime().mount(row, SceneButton.create(ui.runtime(), props)).getRoot();
+        page.appendChild(row);
+    }
+
+    /** P2-6：时间戳以本地式样显示（SHORT = 2026/9/17 20:30 大小）。 */
+    private static String histTimeString(long ts) {
+        return java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,
+            java.text.DateFormat.SHORT).format(new java.util.Date(ts));
     }
 
     // ===================== 构件 =====================
@@ -192,7 +306,7 @@ final class BrowserPages {
         label.setFontSize(PhoneUi.fs(15));
         label.setMaxTextWidth(ui.panelWidth() - 150);
         row.appendChild(label);
-        ui.runtime().on(label, SceneEventType.CLICK, (e, ctx) -> onOpen.run());
+        ui.runtime().on(label, SceneEventType.CLICK, (e, ctx) -> ui.post(onOpen));
 
         SceneNode spacer = SceneNode.column();
         spacer.setFlexGrow(1);
@@ -206,8 +320,12 @@ final class BrowserPages {
         return row;
     }
 
-    /** 历史行：点 URL 直达。 */
-    private static SceneNode historyRow(PhoneUi ui, String url, Runnable onOpen) {
+    /**
+     * P2-6 历史行：点 URL 直达 + 时间列 + 删除钮。删除走 ui.post（红线 R4：
+     * 点击回调内改树由 rebuildManagementPage 在下一帧执行）。
+     */
+    private static SceneNode historyRow(PhoneUi ui, String url, String time,
+            Runnable onOpen, Runnable onDelete) {
         SceneNode row = SceneNode.row();
         row.setFillParentWidth(true);
         row.setCrossAxisAlign(CrossAxisAlign.CENTER);
@@ -220,14 +338,26 @@ final class BrowserPages {
         label.setText(url);
         label.setTextColor(COL_MUTED);
         label.setFontSize(PhoneUi.fs(13));
-        label.setMaxTextWidth(ui.panelWidth() - 60);
+        label.setMaxTextWidth(ui.panelWidth() - 190);
         row.appendChild(label);
-        ui.runtime().on(label, SceneEventType.CLICK, (e, ctx) -> onOpen.run());
+        ui.runtime().on(label, SceneEventType.CLICK, (e, ctx) -> ui.post(onOpen));
 
         SceneNode spacer = SceneNode.column();
         spacer.setFlexGrow(1);
         spacer.setHitTestable(false);
         row.appendChild(spacer);
+
+        SceneNode ts = new SceneNode();
+        ts.setText(time);
+        ts.setTextColor(COL_MUTED);
+        ts.setFontSize(PhoneUi.fs(11));
+        ts.setHitTestable(false);
+        row.appendChild(ts);
+
+        SceneButton.Props delProps = new SceneButton.Props(
+            Signal.create(tr("btn.mcphone_browser.del")), Signal.create(Boolean.TRUE),
+            () -> ui.post(onDelete));
+        ui.runtime().mount(row, SceneButton.create(ui.runtime(), delProps)).getRoot();
         return row;
     }
 

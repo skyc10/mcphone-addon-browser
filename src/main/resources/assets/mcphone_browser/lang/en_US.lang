@@ -15,3 +15,13 @@ err.mcphone_browser.no_url=Please enter a URL first.
 msg.mcphone_browser.lazy_init=The browser engine initializes on first open (MCEF lazy mode).
 
 msg.mcphone_browser.res_hint=Resolution mode (Auto = physical pixels, number = fixed render height).
+
+# P2-3/P2-4/P2-6 management page
+label.mcphone_browser.add_bookmark=New bookmark
+label.mcphone_browser.new_name=Name (optional)
+btn.mcphone_browser.add=Add Bookmark
+btn.mcphone_browser.set_home=Set Home
+hint.mcphone_browser.set_home=Set home page (empty = last visited URL)
+msg.mcphone_browser.home_set=Home page updated.
+btn.mcphone_browser.clear_history=Clear history
+msg.mcphone_browser.bookmarked=Bookmark added.

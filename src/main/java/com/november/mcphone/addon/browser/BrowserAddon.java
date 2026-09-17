@@ -28,9 +28,6 @@ public class BrowserAddon {
 
     public static final String MODID = "mcphone_browser";
 
-    /** 手机 NBT 键前缀（技术红线：只写自己的键）。 */
-    public static final String NBT_LAST_URL = "mcphone:browser:lastUrl";
-
     @Mod.Instance(MODID)
     public static BrowserAddon INSTANCE;
 

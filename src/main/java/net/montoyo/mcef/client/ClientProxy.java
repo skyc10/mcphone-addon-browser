@@ -307,7 +307,32 @@ public class ClientProxy extends BaseProxy implements API {
                     browser.close(true);
                     return false;
                 }
+
+                // P2-9 弹窗拦截：target=_blank 不再静默死链——不创建新窗口，
+                // 直接在当前窗口导航到目标 URL（CEF 允许在 CEF UI 线程调
+                // loadURL）。返回 true = 取消弹窗创建。失败仅记日志：CEF UI
+                // 线程绝不允许触碰 MC UI 树（线程契约 R-5）。
+                @Override
+                public boolean onBeforePopup(
+                        org.cef.browser.CefBrowser browser, org.cef.browser.CefFrame frame,
+                        String target_url, String target_frame_name) {
+                    if(target_url != null && !target_url.isEmpty()) {
+                        try {
+                            browser.loadURL(target_url);
+                            Log.info("Popup intercepted, navigating current page: %s", target_url);
+                        } catch(Throwable t) {
+                            Log.errorEx("Popup interception (loadURL) failed", t);
+                        }
+                    }
+                    return true;
+                }
             });
+
+            // P2-7 下载（简版）：静默落盘 <gamedir>/mcphone/downloads/，反馈经
+            // BrowserScreen.pushNotice（只写 volatile，主线程绘制时取显——
+            // 回调线程与 MC UI 无直接接触）。
+            cefClient.addDownloadHandler(
+                new com.november.mcphone.addon.browser.client.BrowserDownloads());
 
             loadMimeTypeMapping();
         } catch(Throwable t) {

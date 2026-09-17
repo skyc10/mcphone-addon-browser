@@ -52,12 +52,24 @@ public class BrowserScreen extends GuiScreen {
     private boolean lastInPage;
     private int pressedCefBtn = -1;
     private boolean clickDiagDone; // 首次页面点击诊断日志只打一次
+    /** 瞬时通知（下载/收藏反馈）：CEF 回调线程只写 volatile，主线程绘制。 */
+    private static volatile String sPendingNotice;
+    private static volatile long sNoticeUntil;
     private boolean viewportAsserted; // 首帧后校验 CEF 视口并重断言 resize（每 browser 一次）
     private boolean wheelDiagDone; // 首次滚轮诊断日志只打一次
     private long stuckSince; // textureId()==0 且 MCEF 可用的起始时刻（0=未计时）
 
     /** 当前打开的 BrowserScreen（供看门狗关闭）。 */
     private static BrowserScreen current;
+
+    /**
+     * P2-7/P2-9 反馈通道：CEF 回调线程安全——只写两个 volatile，消息由主线程
+     * drawScreen 的末尾横幅消费（约 3.5 秒）。绝不在回调线程触碰 MC UI 树。
+     */
+    public static void pushNotice(String msg) {
+        sPendingNotice = msg;
+        sNoticeUntil = System.currentTimeMillis() + 3500L;
+    }
 
     public BrowserScreen(String url) {
         this.pendingUrl = url;
@@ -126,11 +138,11 @@ public class BrowserScreen extends GuiScreen {
 
     // 工具栏按钮区（与绘制严格一致）
     private int ax0() {
-        return 80; // 前面 50..76 让给了分辨率按钮（46..76）
+        return 100; // 前面 6..96 给了：后退 6..24 / 前进 26..44 / 刷新 46..64 / 分辨率 66..96
     }
 
     private int ax1() {
-        return this.width - 130;
+        return this.width - 148; // 右侧 18px 让给 ★ 收藏（主页/★/关闭/全屏 4 槽组）
     }
 
     private boolean inAddressBar(int mx, int my) {
@@ -141,25 +153,35 @@ public class BrowserScreen extends GuiScreen {
         return my >= 5 && my < BAR - 5 && mx >= 6 && mx < 24;
     }
 
-    private boolean inReload(int mx, int my) {
+    /** 前进按钮（后退右侧）。 */
+    private boolean inForward(int mx, int my) {
         return my >= 5 && my < BAR - 5 && mx >= 26 && mx < 44;
+    }
+
+    private boolean inReload(int mx, int my) {
+        return my >= 5 && my < BAR - 5 && mx >= 46 && mx < 64;
     }
 
     /** 分辨率按钮（刷新右侧、地址栏左侧）。 */
     private boolean inResolution(int mx, int my) {
-        return my >= 5 && my < BAR - 5 && mx >= 46 && mx < 76;
+        return my >= 5 && my < BAR - 5 && mx >= 66 && mx < 96;
     }
 
     private boolean inHome(int mx, int my) {
         return my >= 5 && my < BAR - 5 && mx >= ax1() + 4 && mx < ax1() + 22;
     }
 
-    private boolean inClose(int mx, int my) {
+    /** ★ 收藏按钮（主页右侧；收藏当前页面）。 */
+    private boolean inStar(int mx, int my) {
         return my >= 5 && my < BAR - 5 && mx >= ax1() + 26 && mx < ax1() + 44;
     }
 
-    private boolean inFullscreen(int mx, int my) {
+    private boolean inClose(int mx, int my) {
         return my >= 5 && my < BAR - 5 && mx >= ax1() + 48 && mx < ax1() + 66;
+    }
+
+    private boolean inFullscreen(int mx, int my) {
+        return my >= 5 && my < BAR - 5 && mx >= ax1() + 70 && mx < ax1() + 88;
     }
 
     // ===================== 生命周期 =====================
@@ -286,16 +308,21 @@ public class BrowserScreen extends GuiScreen {
             }
         }
 
-        // 后退 ◀ (6..24)
-        drawRect(6, 5, 24, BAR - 5, b != null ? 0xFF4A4A4A : 0xFF383838);
-        fontRendererObj.drawStringWithShadow("<", 12, 8, b != null ? 0xFFFFFF : 0x909090);
-        // 刷新 R (26..44)
-        drawRect(26, 5, 44, BAR - 5, 0xFF4A4A4A);
-        fontRendererObj.drawStringWithShadow("R", 32, 8, 0xFFFFFF);
-        // 分辨率 (46..76)：显示当前档位，点击循环 Auto→720→1080→1440→2160
+        // 后退 ◀ (6..24)：无历史（含内核探测失败恒 false）时灰显，点击无效
+        boolean canBack = b != null && b.canGoBack();
+        drawRect(6, 5, 24, BAR - 5, b != null ? (canBack ? 0xFF4A4A4A : 0xFF303030) : 0xFF383838);
+        fontRendererObj.drawStringWithShadow("<", 12, 8, canBack ? 0xFFFFFF : 0x808080);
+        // 前进 > (26..44)：同灰显规则
+        boolean canFwd = b != null && b.canGoForward();
+        drawRect(26, 5, 44, BAR - 5, b != null ? (canFwd ? 0xFF4A4A4A : 0xFF303030) : 0xFF383838);
+        fontRendererObj.drawStringWithShadow(">", 32, 8, canFwd ? 0xFFFFFF : 0x808080);
+        // 刷新 R (46..64)：语义改为内核 reload()（不重新导航）
+        drawRect(46, 5, 64, BAR - 5, 0xFF4A4A4A);
+        fontRendererObj.drawStringWithShadow("R", 52, 8, 0xFFFFFF);
+        // 分辨率 (66..96)：显示当前档位，点击循环 Auto→720→1080→1440→2160
         String res = resLabel(AddonStore.resolutionMode());
-        drawRect(46, 5, 76, BAR - 5, 0xFF4A4A4A);
-        fontRendererObj.drawStringWithShadow(res, 74 - fontRendererObj.getStringWidth(res), 8, 0xB8E8B8);
+        drawRect(66, 5, 96, BAR - 5, 0xFF4A4A4A);
+        fontRendererObj.drawStringWithShadow(res, 94 - fontRendererObj.getStringWidth(res), 8, 0xB8E8B8);
 
         // 地址栏 (50..ax1)：框照旧手绘，文字/光标/选区全权交给 vanilla
         // GuiTextField.drawTextBox（无背景模式文字画在 xPosition,yPosition）。
@@ -319,14 +346,16 @@ public class BrowserScreen extends GuiScreen {
         addrField.updateCursorCounter();
         addrField.drawTextBox();
 
-        // 主页 H (ax1+4..ax1+22) / 关闭 X (ax1+26..ax1+44) / 全屏 F (ax1+48..ax1+66)
+        // 主页 H (ax1+4..+22) / ★ 收藏 (ax1+26..+44) / 关闭 X (ax1+48..+66) / 全屏 F (ax1+70..+88)
         drawRect(ax1 + 4, 5, ax1 + 22, BAR - 5, 0xFF4A4A4A);
         fontRendererObj.drawStringWithShadow("H", ax1 + 10, 8, 0xFFFFFF);
-        drawRect(ax1 + 26, 5, ax1 + 44, BAR - 5, 0xFF8A3A3A);
-        fontRendererObj.drawStringWithShadow("X", ax1 + 32, 8, 0xFFFFFF);
-        drawRect(ax1 + 48, 5, ax1 + 66, BAR - 5, 0xFF4A4A4A);
-        fontRendererObj.drawStringWithShadow("F", ax1 + 54, 8, 0xFFFFFF);
-        fontRendererObj.drawStringWithShadow("Esc", ax1 + 70, 8, 0x707070);
+        drawRect(ax1 + 26, 5, ax1 + 44, BAR - 5, 0xFF4A4A4A);
+        fontRendererObj.drawStringWithShadow("\u2605", ax1 + 32, 8, 0xFFE8C84E);
+        drawRect(ax1 + 48, 5, ax1 + 66, BAR - 5, 0xFF8A3A3A);
+        fontRendererObj.drawStringWithShadow("X", ax1 + 54, 8, 0xFFFFFF);
+        drawRect(ax1 + 70, 5, ax1 + 88, BAR - 5, 0xFF4A4A4A);
+        fontRendererObj.drawStringWithShadow("F", ax1 + 76, 8, 0xFFFFFF);
+        fontRendererObj.drawStringWithShadow("Esc", ax1 + 92, 8, 0x707070);
 
         // ---- 页面区域 ----
         int bx = boxX();
@@ -378,6 +407,15 @@ public class BrowserScreen extends GuiScreen {
         drawRect(bx - 1, by, bx, by + viewH, 0xFF5A5A5A);
         drawRect(bx + viewW, by, bx + viewW + 1, by + viewH, 0xFF5A5A5A);
 
+        // 瞬时通知横幅（CEF 回调线程只写 volatile，这里在主线程安全消费）
+        if (sNoticeUntil > System.currentTimeMillis()) {
+            String n = sPendingNotice;
+            if (n != null) {
+                drawRect(bx, by + viewH + 6, bx + viewW, by + viewH + 20, 0xF0222222);
+                fontRendererObj.drawStringWithShadow(n, bx + 6, by + viewH + 9, 0xFFFFE08A);
+            }
+        }
+
         super.drawScreen(mx, my, pt);
     }
 
@@ -417,8 +455,13 @@ public class BrowserScreen extends GuiScreen {
             case 211: // Delete
                 return true;
             default:
-                return false;
+                return isFunctionKey(keyCode); // P2-8: F1-F12
         }
+    }
+
+    /** P2-8：F1–F10 = LWJGL 59..68、F11 = 87、F12 = 88（内核 remapKeycode 映射 GLFW 290-301）。 */
+    private static boolean isFunctionKey(int keyCode) {
+        return keyCode >= 59 && keyCode <= 68 || keyCode == 87 || keyCode == 88;
     }
 
     @Override
@@ -546,12 +589,18 @@ public class BrowserScreen extends GuiScreen {
         if (btn == 0) {
             if (inBack(mx, my)) {
                 BrowserHandle b = browser;
-                if (b != null) b.goBack();
+                if (b != null && b.canGoBack()) b.goBack();
+                return;
+            }
+            if (inForward(mx, my)) {
+                BrowserHandle b = browser;
+                if (b != null && b.canGoForward()) b.goForward();
                 return;
             }
             if (inReload(mx, my)) {
                 BrowserHandle b = browser;
-                if (b != null) {
+                if (b != null && !b.reload()) {
+                    // 旧内核无 reload() 入口：回退为整 URL 重新导航
                     String cur = b.getURL();
                     if (cur != null && !cur.isEmpty()) b.loadURL(cur);
                 }
@@ -566,6 +615,10 @@ public class BrowserScreen extends GuiScreen {
             }
             if (inHome(mx, my)) {
                 navigateHome();
+                return;
+            }
+            if (inStar(mx, my)) {
+                bookmarkCurrent();
                 return;
             }
             if (inClose(mx, my)) {
@@ -647,6 +700,19 @@ public class BrowserScreen extends GuiScreen {
             }
             b.injectMouseWheel(cefX(ex), cefY(ey), awtModifiers(), 120, rotation);
         }
+    }
+
+    /** P2-3 ★ 收藏当前浏览页面（无 URL 给提示；成功给一行瞬时通知）。 */
+    private void bookmarkCurrent() {
+        BrowserHandle b = browser;
+        String url = b != null ? b.getURL() : null;
+        if (url == null || url.isEmpty()) {
+            pushNotice(StatCollector.translateToLocal("err.mcphone_browser.no_url"));
+            return;
+        }
+        AddonStore.addBookmark(url);
+        pushNotice(StatCollector.translateToLocal("msg.mcphone_browser.bookmarked")
+            + " " + AddonStore.hostOf(url));
     }
 
     private void navigateHome() {

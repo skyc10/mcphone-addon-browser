@@ -48,6 +48,7 @@ public final class BrowserHandle {
     private final Method injectKeyPressedByKeyCode, injectKeyReleasedByKeyCode;
     private final Method setFocus;
     private final Method runJS;
+    private final Method canGoBackM, canGoForwardM, reloadM; // P2-5：导航探测 + reload 语义
 
     // ---- MCEF 上游纹理初始化兜底（见 initializeRenderer 注释） ----
     private final Object renderer;          // CefRenderer 实例（探测失败为 null）
@@ -89,6 +90,9 @@ public final class BrowserHandle {
             new Class<?>[]{int.class, char.class, int.class});
         setFocus = probe(c, "setFocus", new Class<?>[]{boolean.class});
         runJS = probe(c, "runJS", new Class<?>[]{String.class, String.class});
+        canGoBackM = probe(c, "canGoBack", new Class<?>[0]);
+        canGoForwardM = probe(c, "canGoForward", new Class<?>[0]);
+        reloadM = probe(c, "reload", new Class<?>[0]);
 
         // 探测 MCEF 0.6/0.7 上游 bug：CefRenderer.initialize()（glGenTextures 的唯一
         // 赋值点）在上游被孤儿化、无任何调用者，导致纹理 id 恒 0、画面永远停在
@@ -510,12 +514,46 @@ public final class BrowserHandle {
         }
     }
 
-    @SuppressWarnings("unused")
     public void goForward() {
         try {
             goForward.invoke(browser);
         } catch (Throwable t) {
             logInjectFailure("goForward", t);
+        }
+    }
+
+    /** P2-5 后退历史是否可用（反射探测；探测失败恒 false = 工具栏恒灰）。 */
+    public boolean canGoBack() {
+        try {
+            return canGoBackM != null && Boolean.TRUE.equals(canGoBackM.invoke(browser));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** P2-5 前进历史是否可用（同上，探测失败恒灰）。 */
+    public boolean canGoForward() {
+        try {
+            return canGoForwardM != null && Boolean.TRUE.equals(canGoForwardM.invoke(browser));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * P2-5 刷新语义：改用内核 {@code reload()}（不再重新导航、不丢滚动/表单态）。
+     * 内核无该入口（探测失败）时返回 false，由调用方回退 loadURL(cur)。
+     */
+    public boolean reload() {
+        if (reloadM == null) {
+            return false;
+        }
+        try {
+            reloadM.invoke(browser);
+            return true;
+        } catch (Throwable t) {
+            logInjectFailure("reload", t);
+            return false;
         }
     }
 
