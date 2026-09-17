@@ -11,6 +11,7 @@ import club.heiqi.uilib.ui.scene.control.SceneTextInput;
 import club.heiqi.uilib.ui.scene.input.SceneEventType;
 import club.heiqi.uilib.ui.scene.layout.CrossAxisAlign;
 import club.heiqi.uilib.ui.scene.node.SceneNode;
+import club.heiqi.uilib.ui.scene.runtime.SceneScrolls;
 import club.heiqi.uilib.ui.reactive.Signal;
 
 import com.november.mcphone.addon.browser.core.AddonStore;
@@ -39,7 +40,7 @@ final class BrowserPages {
     private BrowserPages() {}
 
     static SceneNode create(PhoneUi ui) {
-        SceneNode page = scrollColumn();
+        SceneNode page = scrollColumn(ui);
         page.appendChild(PhoneUi.title(tr("app.mcphone_browser.browser")));
 
         // 惰性初始化：管理页不拉起 CEF——仅在「初始化尚未成功」时提示；
@@ -148,7 +149,13 @@ final class BrowserPages {
         return StatCollector.translateToLocal(key);
     }
 
-    private static SceneNode scrollColumn() {
+    /**
+     * 滚动列容器。必须补 {@link SceneScrolls#attach}（Qz 4.10.0 公开 API，
+     * 与宿主 ScenePages 同型修复 [A9]G1/D-1）：只 setScrollable(true) 不挂
+     * attach 时滚轮 SCROLL 事件无 handler，管理页滚不动。本处已
+     * setScrollable(true)，attach 的前置校验安全通过。
+     */
+    private static SceneNode scrollColumn(PhoneUi ui) {
         SceneNode col = SceneNode.column();
         col.setFillParentWidth(true);
         col.setFlexGrow(1);
@@ -156,6 +163,7 @@ final class BrowserPages {
         col.setGap(10);
         col.setScrollable(true);
         col.setClipChildren(true);
+        SceneScrolls.attach(ui.runtime(), col);
         return col;
     }
 

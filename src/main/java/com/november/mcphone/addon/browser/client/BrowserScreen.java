@@ -274,9 +274,12 @@ public class BrowserScreen extends GuiScreen {
                 int actualW = b.cefViewWidth();
                 int actualH = b.cefViewHeight();
                 if (actualW != cefW || actualH != cefH) {
-                    System.out.println("[mcphone_browser] viewport mismatch (actual "
-                        + actualW + "x" + actualH + " != expected " + cefW + "x" + cefH
-                        + ") — re-asserting resize");
+                    // R0：resize 重断言保留（功能性修复），mismatch 日志默认关
+                    if (net.montoyo.mcef.client.ClientProxy.DIAG) {
+                        System.out.println("[mcphone_browser] viewport mismatch (actual "
+                            + actualW + "x" + actualH + " != expected " + cefW + "x" + cefH
+                            + ") — re-asserting resize");
+                    }
                     b.resize(cefW, cefH);
                 }
                 b.setFocus(true);
@@ -584,8 +587,9 @@ public class BrowserScreen extends GuiScreen {
             int cx = cefX(mx);
             int cy = cefY(my);
             int mask = toAwtMask(pressedCefBtn);
-            // 一次性点击诊断：确认坐标缩放与按钮掩码真实到达 CEF（复测后可删）
-            if (!clickDiagDone) {
+            // 一次性点击诊断（R0 默认关，-Dmcphone_browser.diag 开启）：确认坐标
+            // 缩放与按钮掩码真实到达 CEF
+            if (!clickDiagDone && net.montoyo.mcef.client.ClientProxy.DIAG) {
                 clickDiagDone = true;
                 System.out.println("[mcphone_browser] first click: gui=(" + (mx - boxX()) + ","
                     + (my - boxY()) + ") cef=(" + cx + "," + cy + ") button=" + pressedCefBtn
@@ -633,9 +637,9 @@ public class BrowserScreen extends GuiScreen {
         if (wheel != 0 && over) {
             // Java MouseWheelEvent：rotation 正值=向下；MC 正值=向上
             int rotation = wheel > 0 ? -1 : 1;
-            // 一次性滚轮诊断：滚轮同样携带坐标，若滚轮有效而点击无效，
-            // 则「坐标缩放错」假设不成立（复测后可删）
-            if (!wheelDiagDone) {
+            // 一次性滚轮诊断（R0 默认关，-Dmcphone_browser.diag 开启）：滚轮同样
+            // 携带坐标，若滚轮有效而点击无效则坐标缩放假设不成立
+            if (!wheelDiagDone && net.montoyo.mcef.client.ClientProxy.DIAG) {
                 wheelDiagDone = true;
                 System.out.println("[mcphone_browser] first wheel: cef=(" + cefX(ex) + ","
                     + cefY(ey) + ") rotation=" + rotation + " actualViewport="
@@ -683,7 +687,9 @@ public class BrowserScreen extends GuiScreen {
             b.resize(cefW, cefH);
             b.setFocus(true);
         }
-        System.out.println("[mcphone_browser] resolution mode -> " + resLabel(next)
-            + " (cef viewport " + cefW + "x" + cefH + ", gui " + viewW + "x" + viewH + ")");
+        if (net.montoyo.mcef.client.ClientProxy.DIAG) {
+            System.out.println("[mcphone_browser] resolution mode -> " + resLabel(next)
+                + " (cef viewport " + cefW + "x" + cefH + ", gui " + viewW + "x" + viewH + ")");
+        }
     }
 }

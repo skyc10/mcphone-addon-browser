@@ -20,7 +20,7 @@
 
 以下项目在 GTNH 2.9.0-beta-3 + MCEF 0.6 环境下**尚未完成实测**，欢迎按此清单反馈：
 
-1. **浏览器打开与渲染**：首次点击「览」图标，CEF 正常拉起、页面渲染出内容（beta.4 根因修复：帧上传链已验证完好，问题定位到**绘制侧**——`CefRenderer.render()` 自带路径在 Angelica GLSM 下整面透明，改为绕开它自绘正确 UV 的四边形并显式关闭 alpha test/blend；首次绘制会做一次纹理像素读回诊断，日志出现 `texture probe ... alpha0=N%`）
+1. **浏览器打开与渲染**：首次点击「览」图标，CEF 正常拉起、页面渲染出内容（beta.4 根因修复：帧上传链已验证完好，问题定位到**绘制侧**——`CefRenderer.render()` 自带路径在 Angelica GLSM 下整面透明，改为绕开它自绘正确 UV 的四边形并显式关闭 alpha test/blend；纹理像素读回诊断默认关闭，`-Dmcphone_browser.diag=true` 时首绘做一次读回，日志出现 `texture probe ... alpha0=N%`）
 2. **网页交互（beta.7 重点）**：鼠标移动/左中右键点击/滚轮/键盘输入是否全部生效。**beta.6 复测：键盘输入与地址栏退格连删已修好，鼠标点击仍无效** → beta.7 主攻**视口竞态**：MCEF 0.6 的 `resize()` 直通 native `N_WasResized`，浏览器异步创建完成前调用会被静默丢弃——initGui 创建后立刻调的那次可能没生效，CEF 实际视口=创建默认尺寸；显示仍正常（纹理被拉伸到 GUI 矩形）但点击坐标按错误比例缩放 → 落点全错 →「点了没反应」（键盘无坐标不受影响，与症状自洽）。现改为**首帧上屏后校验视口**：日志 `viewport mismatch (actual WxH != expected WxH) — re-asserting resize` 时自动重断言 resize。若视口一致（无 mismatch 日志）点击仍坏，则排除该理论，下一嫌疑在 CEF 内部 gating 层。诊断日志已升级：`first click: ... actualViewport=WxH`（期望 = cefViewport）与 `first wheel: cef=(x,y) ...`（滚轮同样携带坐标，若滚轮有效而点击无效则坐标假设不成立）
 3. **地址栏输入**：beta.3 换用 vanilla `GuiTextField`，应完整支持单击键入/IME 合成整串输入/Ctrl+A 全选/Ctrl+C 复制/Ctrl+V 粘贴/Ctrl+X 剪切/Delete/Home/End/Shift 选区/点击定位光标；**beta.6 修复退格长按不连删**（GuiScreen 默认关闭键重复，现 initGui 开启 `enableRepeatEvents(true)`、onGuiClosed 恢复，与 vanilla 聊天框一致）；若「合成整串输入」仍无效则属 lwjgl3ify/GLFW 层问题，请反馈
 4. **渲染分辨率（beta.5 新功能）**：默认「Auto」= 页面区域按物理像素渲染（1 CEF 像素 ↔ 1 屏幕像素，最清晰）；工具栏「分」按钮循环 Auto→720→1080→1440→2160（固定渲染高度，16:9 定宽，数字越大字越小越清晰、越小字越大越模糊），选择持久化到 `settings.json` 的 `resolutionMode`
@@ -32,7 +32,7 @@
 
 - **依赖 MCEF 版本差异**：针对 GTNH 的 MCEF 0.6（`renderer_` 字段、6 参 `injectMouseButton`）校准；其他 MCEF 分支若签名不同，对应功能会被自动禁用（日志有 `WARN: ... signature not found` 提示），核心浏览功能不受影响
 - **帧上传自驱动（GTNH 兼容修复）**：MCEF 的帧上传链是 `onPaint` 缓存 → `mcefUpdate()`（GL 线程 `glTexImage2D`）→ `CefRenderer.render()`，而 `mcefUpdate()` 唯一调用方是 MCEF 自带的 `RenderTickEvent` 监听——GTNH + lwjgl3ify 环境下该事件不触发，帧永远不上传。本附属于 `drawScreen` 内自驱动 `N_DoMessageLoopWork()` + `mcefUpdate()`（与 MCEF 自带泵并存幂等）；页面绘制门槛为「纹理非 0 且 view 尺寸非 0」，若 15 秒后仍未上屏会显示 `[queue=N view=WxH]` 诊断（`queue=0` 为 CEF 未产帧，`queue>0` 为上传链断裂）
-- **绘制侧绕开 CefRenderer.render（Angelica 兼容修复）**：字节码级取证确认帧上传成功后页面仍整面透明，且字号/drawRect 等 Tessellator 绘制均正常——问题锁定在 `CefRenderer.render()` 自身（UV 布点有缺陷：v1=(1,1) 非 (1,0)、v4 重复 v1 的 UV）与 Angelica GLSM core-profile 转换的叠加。本附属不再调用 MCEF 的 `render()`，改为自绘正确 UV(0,0)-(1,1) 的四边形并显式关闭 alpha test/blend（CEF OSR 帧的 alpha 通道可能为 0，在常驻 GL_ALPHA_TEST 下全部片段会被丢弃）。首次绘制自动执行纹理像素读回诊断：日志 `texture probe WxH tex=N alpha0=X% alpha255=Y%`（`alpha0=100%` = CEF 产了全透明帧，需查 CEF 背景色；有内容 = 纹理正常），并叠加 3 秒黄色参考方块辅助区分「纹理没内容」与「绘制路径失效」
+- **绘制侧绕开 CefRenderer.render（Angelica 兼容修复）**：字节码级取证确认帧上传成功后页面仍整面透明，且字号/drawRect 等 Tessellator 绘制均正常——问题锁定在 `CefRenderer.render()` 自身（UV 布点有缺陷：v1=(1,1) 非 (1,0)、v4 重复 v1 的 UV）与 Angelica GLSM core-profile 转换的叠加。本附属不再调用 MCEF 的 `render()`，改为自绘正确 UV(0,0)-(1,1) 的四边形并显式关闭 alpha test/blend（CEF OSR 帧的 alpha 通道可能为 0，在常驻 GL_ALPHA_TEST 下全部片段会被丢弃）。首绘纹理读回诊断默认关闭（`-Dmcphone_browser.diag=true` 开启，R0 收口后精简为只打一行 alpha 统计、无参考方块）：日志 `texture probe WxH tex=N alpha0=X% alpha255=Y%`（`alpha0=100%` = CEF 产了全透明帧，需查 CEF 背景色；有内容 = 纹理正常）
 - **强杀是最后的兜底**：90 秒 kill timer 假设世界保存已在 `running=false` 前完成（1.7.10 退出时序如此）；极端情况下若保存超过 90 秒（巨型存档 + 机械盘）理论上可能被误杀——出现请把 watchdog 日志发到 issue
 - **键盘注入无 keyCode（仅旧 MCEF 内核）**：MCEF 0.6/0.7 的 `injectKeyXxx(char, modifiers)` 无法表达功能键（F1–F12、方向键、组合键），网页内这类按键可能无效；modern 内核（v1.0.2-modern.3 起）已通过 `injectKeyXxxByKeyCode` 管道支持方向键/Delete/Home/End/PgUp/PgDn/Tab（Tab 于 modern.4 修复 Windows 扫描码；F1–F12 仍未映射）
 - **鼠标坐标缩放（beta.5）**：CEF 渲染分辨率与 GUI 显示尺寸解耦（默认物理像素，可手动改档），所有鼠标注入坐标按 `cefW/viewW` 缩放到 CEF 视口空间；若高分档（2160p）下点击明显偏移请反馈
@@ -48,6 +48,17 @@
 | WebDisplays 1.7.10 | 可选（本附属不再依赖它的方块屏） |
 
 CEF 运行时文件（`libcef.dll` 等）需放在 JVM 能找到的库路径下。
+
+## 诊断开关（默认全关）
+
+R0 收口后所有诊断点默认关闭、代码保留，回归/取证只需加 JVM 参数：
+
+| JVM 参数 | 开启内容 |
+| --- | --- |
+| `-Dmcphone_browser.diag=true` | 页面输入探针（左上角红色 MCEF-DIAG 浮层：注入事件 mdown/key/wheel/move 计数）+ 一次性诊断日志（viewport mismatch / first click / first wheel / resolution mode / texture probe alpha 统计） |
+| `-Dmcphone_browser.cdp=true` | CDP 远程调试端口 9333 + CEF 详细日志（INFO 落 `mcefmodern/<commit>/cef-debug.log`） |
+
+仓库内 `tools/cdp_bisect.py` 是 CDP 诊断工具（不进 jar），使用前必须配套加 `-Dmcphone_browser.cdp=true`。默认构建（无 JVM 参数）不出现任何诊断点，可直接发版。
 
 ## 构建
 

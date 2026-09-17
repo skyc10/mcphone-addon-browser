@@ -200,10 +200,14 @@ public final class BrowserHandle {
     }
 
     /**
-     * modern.5 诊断探针：见 ClientProxy.DIAG_PROBE_JS。首帧与每次 loadURL 后
-     * 各调一次（脚本本身幂等，ClientProxy 的 loadEnd 钩子也会重挂）。
+     * R0 诊断探针：见 ClientProxy.DIAG_PROBE_JS。首帧与每次 loadURL 后
+     * 各调一次（脚本本身幂等，ClientProxy 的 loadEnd 钩子也会重挂）；
+     * 开关关（默认）时直接 return，不注入任何 JS。
      */
     public void armDiagProbe() {
+        if (!net.montoyo.mcef.client.ClientProxy.DIAG) {
+            return;
+        }
         runJS(net.montoyo.mcef.client.ClientProxy.DIAG_PROBE_JS);
     }
 
@@ -235,10 +239,10 @@ public final class BrowserHandle {
      * 无关紧要），不再依赖 MCEF 的 render()。内部覆盖 {@link #draw} 语义，
      * 由 BrowserScreen 调用。</p>
      *
-     * <p>附带一次性诊断：首绘时 glGetTexImage 读回纹理 alpha 分布（全 0 = CEF
-     * 产的就是全透明帧，问题在 CEF 侧背景色；有内容 = 纹理没问题，坐实绘制侧），
-     * 并在纹理同一位置画一个 20x20 参考方块——参考块可见而页面不可见 = 纹理外
-     * 因（GLSM 状态/混合），两者都不可见 = 该位置的纹理绘制路径整体失效。</p>
+     * <p>附带一次性诊断（R0 收口：默认关，-Dmcphone_browser.diag 开启）：首绘时
+     * glGetTexImage 读回并只打一行 alpha 统计——全 0 = CEF 产的就是全透明帧
+     * （问题在 CEF 侧背景色）；有内容 = 纹理没问题，坐实绘制侧。R0 后不再画
+     * 3 秒黄色参考方块。</p>
      */
     public void drawSelf(double x1, double y1, double x2, double y2) {
         int tex = textureId();
@@ -271,15 +275,20 @@ public final class BrowserHandle {
         } catch (Throwable tr) {
             System.err.println("[mcphone_browser] drawSelf failed: " + tr);
         }
-        drawRefSquareIfDue();
     }
 
-    // ---- 一次性诊断（首绘时执行一次） ----
+    // ---- 一次性诊断（首绘时执行一次；默认关，-Dmcphone_browser.diag 开启） ----
     private boolean diagDone;
     private int diagAttempts;
 
+    /**
+     * R0 精简版纹理健康检查：开关开启时首绘做一次 glGetTexImage 读回，
+     * 只打一行 alpha 统计（无参考方块）。alpha0=100% = CEF 产了全透明帧
+     * （CEF 侧背景色问题）；有内容 = 纹理正常（坐实绘制侧）。
+     * 默认全关：无读回开销、无参考方块，只作诊断取证用。
+     */
     private void runFirstFrameDiagnostics(double x1, double y1, int tex) {
-        if (diagDone) {
+        if (diagDone || !net.montoyo.mcef.client.ClientProxy.DIAG) {
             return;
         }
         int w = cefViewWidth();
@@ -315,45 +324,6 @@ public final class BrowserHandle {
                 + (zeros == n ? "  << CEF produced a fully transparent frame!" : ""));
         } catch (Throwable t) {
             System.out.println("[mcphone_browser] texture probe failed: " + t);
-        }
-        // 参考方块：与页面同一绑定纹理状态下画在页面左上角 (bx+2,by+2)，持续 3 秒
-        // （refUntil = 系统毫秒）。页面四边形与参考块都不可见 → 该位置纹理绘制整体
-        // 失效（GLSM 侧问题）；参考块可见、页面不可见 → CEF 帧 alpha=0 被丢弃或纹理
-        // 内容异常（对照 probe 输出的 alpha 分布）。
-        refSquareUntil = System.currentTimeMillis() + 3000;
-        refX = x1;
-        refY = y1;
-        System.out.println("[mcphone_browser] reference square armed at (" + (int) x1 + "," + (int) y1 + ") for 3s");
-    }
-
-    /** 参考方块：显示截止时刻与位置（诊断期）。 */
-    private long refSquareUntil;
-    private double refX, refY;
-
-    /** 每帧调用：诊断参考方块仍在其显示窗口内时画出来（不透明黄色）。 */
-    private void drawRefSquareIfDue() {
-        if (refSquareUntil == 0 || System.currentTimeMillis() > refSquareUntil) {
-            return;
-        }
-        try {
-            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_BLEND);
-            GL11.glDisable(GL11.GL_ALPHA_TEST);
-            GL11.glColor4f(1f, 1f, 0f, 1f);
-            Tessellator t = Tessellator.instance;
-            t.startDrawingQuads();
-            t.setColorOpaque_F(1f, 1f, 0f);
-            t.addVertex(refX + 2, refY + 2, 0);
-            t.addVertex(refX + 2, refY + 22, 0);
-            t.addVertex(refX + 22, refY + 22, 0);
-            t.addVertex(refX + 22, refY + 2, 0);
-            t.draw();
-            GL11.glPopAttrib();
-            GL11.glColor4f(1f, 1f, 1f, 1f);
-        } catch (Throwable t) {
-            System.err.println("[mcphone_browser] reference square failed: " + t);
         }
     }
 
@@ -568,6 +538,26 @@ public final class BrowserHandle {
             injectFailureLogged = true;
             System.err.println("[mcphone_browser] WARN: " + what
                 + " injection failed (further failures silent): " + t);
+            // R0 异常可诊断性：反射失败的真因被包在 cause 里（典型是
+            // InvocationTargetException 包着的 UnsatisfiedLinkError）。
+            // 首次失败时展开到根因，打印 cause 类名 + 栈前 8 行——这是
+            // “键盘注入仍抛异常”能否定位的前提。
+            Throwable c = t;
+            while (c != null && (c instanceof java.lang.reflect.InvocationTargetException || c.getCause() != null)) {
+                Throwable next = c.getCause();
+                if (next == null || next == c) {
+                    break;
+                }
+                c = next;
+            }
+            if (c != null && c != t) {
+                System.err.println("[mcphone_browser] WARN: root cause: " + c.getClass().getName()
+                    + ": " + c.getMessage());
+                StackTraceElement[] st = c.getStackTrace();
+                for (int i = 0; i < st.length && i < 8; i++) {
+                    System.err.println("[mcphone_browser]   at " + st[i]);
+                }
+            }
         }
     }
 

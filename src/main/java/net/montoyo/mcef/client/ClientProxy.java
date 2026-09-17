@@ -66,7 +66,27 @@ public class ClientProxy extends BaseProxy implements API {
     public static boolean VIRTUAL = false;
 
     /**
-     * modern.5 诊断探针（发布版移除）：页面内 capture 阶段输入监听 + 左上角
+     * R0 诊断开关：默认全关、代码保留，回归/取证只需加 JVM 参数。
+     * <ul>
+     * <li>{@code -Dmcphone_browser.diag=true}：页面输入探针（DIAG_PROBE_JS +
+     * onLoadEnd 重挂）与 BrowserScreen/BrowserHandle 的一次性诊断日志；</li>
+     * <li>{@code -Dmcphone_browser.cdp=true}：CDP 端口（9333）+ CEF 详细日志
+     * （INFO 落 cef-debug.log）——诊断工具 tools/cdp_bisect.py 需要它配套。</li>
+     * </ul>
+     * 属性存在且不为 "false" 即开启。
+     */
+    private static boolean diagFlag(String name) {
+        String v = System.getProperty(name);
+        return v != null && !"false".equalsIgnoreCase(v.trim());
+    }
+
+    /** 页面探针 / 一次性诊断日志总开关（默认关）。 */
+    public static final boolean DIAG = diagFlag("mcphone_browser.diag");
+    /** CDP 端口 + CEF 详细日志开关（默认关）。 */
+    public static final boolean CDP = diagFlag("mcphone_browser.cdp");
+
+    /**
+     * R0 诊断探针（默认不注入，-Dmcphone_browser.diag 时才挂载）：页面内 capture 阶段输入监听 + 左上角
      * 计数浮层。注入事件若到达 renderer，数字立即跳动；数字不动 = 事件死在
      * CEF host→renderer 路径。hasFocus() 直接验证 CEF 焦点假设。幂等。
      */
@@ -229,11 +249,13 @@ public class ClientProxy extends BaseProxy implements API {
             ArrayList<String> switches = new ArrayList<String>();
             switches.add("--autoplay-policy=no-user-gesture-required");
             switches.add("--disable-web-security");
-            // modern.5 diagnostics: expose CDP (bisect trusted vs injected input)
-            // and write a verbose CEF/Chromium log next to the natives.
-            // 9333, not 9222: Windows WebView2 sometimes occupies 9222.
-            switches.add("--remote-debugging-port=9333");
-            switches.add("--remote-allow-origins=*");
+            // R0 诊断开关：CDP（trusted vs injected 输入二分，配套 tools/cdp_bisect.py）
+            // 默认关闭；-Dmcphone_browser.cdp=true 才加。9333 而非 9222：
+            // Windows WebView2 有时占用 9222。
+            if (CDP) {
+                switches.add("--remote-debugging-port=9333");
+                switches.add("--remote-allow-origins=*");
+            }
 
             for(String a: MCEF.CEF_ARGS) {
                 if(a != null && !a.trim().isEmpty())
@@ -250,27 +272,32 @@ public class ClientProxy extends BaseProxy implements API {
             settings.background_color = settings.new ColorType(0, 255, 255, 255);
             settings.cache_path = new File(commitDir, "Cache").getAbsolutePath();
             settings.user_agent_product = "MCEF/2";
-            // modern.5 diagnostics: INFO level captures Chromium's console
-            // messages ("INFO:CONSOLE(n)") and OSR input routing warnings in
-            // the log file; revert to LOGSEVERITY_WARNING for release builds.
-            settings.log_file = new File(commitDir, "cef-debug.log").getAbsolutePath();
-            settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_INFO;
+            // R0 诊断开关：默认 LOGSEVERITY_WARNING 且不落 cef-debug.log；
+            // 仅 -Dmcphone_browser.cdp 时写文件并提升到 INFO（捕获 Chromium
+            // console 消息与 OSR input routing 警告）。
+            settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_WARNING;
+            if (CDP) {
+                settings.log_file = new File(commitDir, "cef-debug.log").getAbsolutePath();
+                settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_INFO;
+            }
 
             cefApp = CefApp.getInstance(switches.toArray(new String[switches.size()]), settings);
             cefClient = cefApp.createClient();
             cefRouter = CefMessageRouter.create(new CefMessageRouter.CefMessageRouterConfig("mcefQuery", "mcefCancel"));
             cefClient.addMessageRouter(cefRouter);
 
-            // modern.5 diagnostics: re-arm the page-side input probe on every
-            // main-frame load. The probe is idempotent; see BrowserHandle.
-            cefClient.addLoadHandler(new CefLoadHandlerAdapter() {
-                @Override
-                public void onLoadEnd(org.cef.browser.CefBrowser browser, org.cef.browser.CefFrame frame, int statusCode) {
-                    if(browser instanceof org.cef.browser.CefBrowserOsr && frame != null && frame.isMain()) {
-                        ((org.cef.browser.CefBrowserOsr) browser).runJS(DIAG_PROBE_JS, "");
+            // R0 诊断开关：页面输入探针默认不挂载（-Dmcphone_browser.diag 开启）。
+            // DIAG_PROBE_JS 常量保留在源码里；脚本幂等，见 BrowserHandle。
+            if (DIAG) {
+                cefClient.addLoadHandler(new CefLoadHandlerAdapter() {
+                    @Override
+                    public void onLoadEnd(org.cef.browser.CefBrowser browser, org.cef.browser.CefFrame frame, int statusCode) {
+                        if(browser instanceof org.cef.browser.CefBrowserOsr && frame != null && frame.isMain()) {
+                            ((org.cef.browser.CefBrowserOsr) browser).runJS(DIAG_PROBE_JS, "");
+                        }
                     }
-                }
-            });
+                });
+            }
 
             displayHandler = new DisplayHandler();
             cefClient.addDisplayHandler(displayHandler);
