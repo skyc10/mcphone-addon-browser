@@ -8,9 +8,12 @@
  *
  * 附属（mcphone_browser）依赖说明：
  *  - mcphone：编译期需要 api/IPhoneApp、api/PhoneApi、client/scene/PhoneUi 与 core/ItemPhone。
- *    运行时由实例 mods 里的 mcphone-1.0.0.jar 提供，因此用 compileOnly。
- *  - Qz-UILib：PhoneUi 场景树底层框架，同样 compileOnly（运行时由 qz_uilib-4.8.0.jar 提供）。
- *  - WebDisplays/MCEF：全程反射调用（技术红线），不进编译期依赖。
+ *    运行时由实例 mods 里的 mcphone 发布 jar 提供，因此用 compileOnly。
+ *  - Qz-UILib（4.10.0 线）：PhoneUi 场景树底层框架，同样 compileOnly
+ *    （libs/ 里的 qz_uilib-dev.jar 是开发镜像产物文件名）。
+ *  - MCEF modem 内核不是外部依赖：org.cef / net.montoyo.mcef 源码就在本仓
+ *    src/main/java，一起编译打包。运行时 mods/ 里【必须删除】旧独立 MCEF jar
+ *    ——org.cef/net.montoyo.mcef 同包名不可共存（先加载者生效，类必冲突）。
  */
 dependencies {
     compileOnly(files(new File(rootDir, "libs/mcphone-1.0.0.jar").absolutePath))
