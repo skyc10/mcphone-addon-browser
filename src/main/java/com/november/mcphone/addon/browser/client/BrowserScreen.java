@@ -695,7 +695,10 @@ public class BrowserScreen extends GuiScreen {
             // 43 报告 §4 E1-E6 判读：press 是否注入、坐标/视口是否正确、
             // 是否是「补发 release」救了这次点击。focusProbe/lastBtnInvokeOk 为
             // 焦点近似口径（内核不公开 hasFocus()，t20-W1-02）：反射探测是否
-            // armed + 最近一次按钮注入是否到达反射层
+            // armed + 最近一次按钮注入是否到达反射层。
+            // t19-F3：两个诊断块整体移到 injectMouseButton（本行紧接着调用）
+            // 之后取值，使 lastBtnInvokeOk 反映的是「本次 press」而非「上一击」。
+            b.injectMouseButton(cx, cy, mask | awtModifiers(), pressedCefBtn, true, 1);
             if (navClickDiag && navClickDiagBudget > 0) {
                 navClickDiag = false;
                 navClickDiagBudget--;
@@ -724,7 +727,6 @@ public class BrowserScreen extends GuiScreen {
                     + " mask=" + (mask | awtModifiers()) + " cefViewport=" + cefW + "x" + cefH
                     + " actualViewport=" + b.cefViewWidth() + "x" + b.cefViewHeight());
             }
-            b.injectMouseButton(cx, cy, mask | awtModifiers(), pressedCefBtn, true, 1);
         }
     }
 

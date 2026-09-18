@@ -591,13 +591,15 @@ public final class BrowserHandle {
 
     // ===================== 输入注入 =====================
 
-    // 静默吞异常曾是排查期的坑：注入真失败时无任何日志。现在首次失败打一行
-    // WARN（含异常），后续静默——反射调用失败通常是持久性的，刷屏无益。
-    private boolean injectFailureLogged;
+    // 静默吞异常曾是排查期的坑：注入真失败时无任何日志。现在每通道首次失败各打
+    // 一行 WARN（含异常），同通道后续静默——反射失败常见为持久态，刷屏无益。
+    // t28-F5（t19-F5）：once-flag 由「全局共用一个 boolean」改为按 what 通道名各自
+    // 记一次——键盘先失败不应吞掉后续鼠标/滚轮通道的首错（各通道失败根因可能不同）。
+    private final java.util.Set<String> injectFailureLogged =
+        java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
 
     private void logInjectFailure(String what, Throwable t) {
-        if (!injectFailureLogged) {
-            injectFailureLogged = true;
+        if (injectFailureLogged.add(what)) {
             System.err.println("[mcphone_browser] WARN: " + what
                 + " injection failed (further failures silent): " + t);
             // R0 异常可诊断性：反射失败的真因被包在 cause 里（典型是
