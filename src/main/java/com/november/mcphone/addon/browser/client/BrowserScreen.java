@@ -471,7 +471,7 @@ public class BrowserScreen extends GuiScreen {
         switch (keyCode) {
             case 14:  // Backspace
             case 15:  // Tab
-            case 28:  // Enter（小键盘）
+            case 28:  // Return（主键盘；156=小键盘 Enter，remapKeycode 不映射，勿加）
             case 199: // Home
             case 200: // Up
             case 201: // Page Up
@@ -693,7 +693,9 @@ public class BrowserScreen extends GuiScreen {
             int mask = toAwtMask(pressedCefBtn);
             // T8：导航后首点一次性诊断（默认开，预算 2 行/实例）——字段供
             // 43 报告 §4 E1-E6 判读：press 是否注入、坐标/视口是否正确、
-            // 是否是「补发 release」救了这次点击
+            // 是否是「补发 release」救了这次点击。focusProbe/lastBtnInvokeOk 为
+            // 焦点近似口径（内核不公开 hasFocus()，t20-W1-02）：反射探测是否
+            // armed + 最近一次按钮注入是否到达反射层
             if (navClickDiag && navClickDiagBudget > 0) {
                 navClickDiag = false;
                 navClickDiagBudget--;
@@ -710,7 +712,8 @@ public class BrowserScreen extends GuiScreen {
                     + " mods=" + (mask | awtModifiers())
                     + " viewport=" + cefW + "x" + cefH
                     + " actualViewport=" + b.cefViewWidth() + "x" + b.cefViewHeight()
-                    + " hasFocus=" + b.diagHasFocus());
+                    + " focusProbe=" + (b.focusProbeArmed() ? "armed" : "missing")
+                    + " lastBtnInvokeOk=" + b.lastMouseButtonInvoked());
             }
             // 一次性点击诊断（R0 默认关，-Dmcphone_browser.diag 开启）：确认坐标
             // 缩放与按钮掩码真实到达 CEF

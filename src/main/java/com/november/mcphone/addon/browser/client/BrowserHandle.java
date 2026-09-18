@@ -205,18 +205,26 @@ public final class BrowserHandle {
     }
 
     /**
-     * T8 诊断：反射探测内核是否有 {@code hasFocus()} 入口并读取。本 fork 的
-     * CefBrowserOsr/CefBrowser_N 未公开该方法时返回 {@code "n/a"}——只读探测，
-     * 无任何副作用，仅供「导航后首点」一次性日志判读焦点假设。
+     * T20-W1-02：内核 {@code CefBrowser} 不公开 {@code hasFocus()}——旧
+     * {@code diagHasFocus}（恒返回 n/a 的假读数）已废弃删除。可用替代口径
+     * （与 wiki 侧 WikiHandle 完全一致）：
+     * <ul>
+     * <li>{@link #focusProbeArmed()}：setFocus 反射探测是否成功（armed）；</li>
+     * <li>{@link #lastMouseButtonInvoked()}：最近一次 injectMouseButton 是否
+     *     到达内核包装层且未抛异常。</li>
+     * </ul>
+     * 近似语义：只证明 Java 侧调用成功，不代表 CEF/Blink 真正处理焦点/点击；
+     * 判读 43 报告 §4 E1-E6 时勿当作焦点实态。
      */
-    public String diagHasFocus() {
-        try {
-            Method m = browser.getClass().getMethod("hasFocus");
-            Object r = m.invoke(browser);
-            return String.valueOf(r);
-        } catch (Throwable t) {
-            return "n/a";
-        }
+    public boolean focusProbeArmed() {
+        return setFocus != null;
+    }
+
+    private volatile boolean lastMouseButtonOk = true;
+
+    /** 最近一次 injectMouseButton 反射调用结果（true=已发出未抛异常）。 */
+    public boolean lastMouseButtonInvoked() {
+        return lastMouseButtonOk;
     }
 
     /**
@@ -630,7 +638,9 @@ public final class BrowserHandle {
         if (injectMouseButton == null) return;
         try {
             injectMouseButton.invoke(browser, x, y, modifiers, button, pressed, clickCount);
+            lastMouseButtonOk = true; // T20-W1-02 诊断：反射层送达内核包装且未抛
         } catch (Throwable t) {
+            lastMouseButtonOk = false;
             logInjectFailure("mouse button", t);
         }
     }
