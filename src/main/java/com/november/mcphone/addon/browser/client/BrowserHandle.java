@@ -31,7 +31,8 @@ import net.minecraft.client.renderer.Tessellator;
  *     {@code CefBrowserOsr} 实现（LWJGL 键码经 remapKeycode 映射 GLFW 码），
  *     是非字符键（方向键等）唯一表达通道；其他 MCEF 版本探测失败即静默降级；</li>
  * <li>{@code injectMouseWheel(x, y, modifiers, scrollAmount, wheelRotation)}：
- *     rotation 正值=向下滚。</li>
+ *     rotation 正值=向上滚（与 {@code Mouse.getEventDWheel()} 同号；历史 bug：
+ *     67c371a / 2d73b54 曾写反，勿改回）。</li>
  * </ul>
  *
  * <p>核心方法（resize/close/draw/getTextureID/loadURL/goBack/goForward/getURL）
@@ -201,6 +202,21 @@ public final class BrowserHandle {
         System.out.println("[mcphone_browser] first frame uploaded — re-focusing browser");
         setFocus(true);
         armDiagProbe();
+    }
+
+    /**
+     * T8 诊断：反射探测内核是否有 {@code hasFocus()} 入口并读取。本 fork 的
+     * CefBrowserOsr/CefBrowser_N 未公开该方法时返回 {@code "n/a"}——只读探测，
+     * 无任何副作用，仅供「导航后首点」一次性日志判读焦点假设。
+     */
+    public String diagHasFocus() {
+        try {
+            Method m = browser.getClass().getMethod("hasFocus");
+            Object r = m.invoke(browser);
+            return String.valueOf(r);
+        } catch (Throwable t) {
+            return "n/a";
+        }
     }
 
     /**
@@ -619,7 +635,8 @@ public final class BrowserHandle {
         }
     }
 
-    /** rotation 正值=向下滚。 */
+    /** rotation 正值=向上滚（与 {@code Mouse.getEventDWheel()} 同号；历史 bug：
+     67c371a / 2d73b54 曾写反，勿改回）。 */
     public void injectMouseWheel(int x, int y, int modifiers, int scrollAmount, int rotation) {
         if (injectMouseWheel == null) return;
         try {

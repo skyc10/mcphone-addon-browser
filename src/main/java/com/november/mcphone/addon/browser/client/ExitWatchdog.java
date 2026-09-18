@@ -38,6 +38,14 @@ import cpw.mods.fml.relauncher.SideOnly;
  * <p>日志策略：arm() 起双写 System.out + 实例 logs/mcphone_browser_watchdog.log；
  * 检测到 running=false 后<b>只写文件</b>——退出阶段 log4j 已停、控制台管道状态
  * 不可控，println 可能阻塞或丢字，文件才是唯一可信通道。</p>
+ *
+ * <p><b>t15 修复（T4-F3，2026-09-18）</b>：forceHalt 末档直调
+ * {@link Runtime#halt(int)} 已删除——FML 在类加载期把本类该字节码调用点重定向为
+ * System.exit（fml-client-latest.log "REROUTING TO FML" 实锤），末档保险实际
+ * 失效，且会在 shutdown hooks 卡死时反过来制造「窗口消失但进程残留」。现在
+ * 反射 halt 失败后仅保留 FMLCommonHandler.exitJava(0, false)（正常触发钩子链、
+ * 引出本体 early-flag → 外部杀手 35s 强杀）；再失败则明确落日志，交给本体
+ * ForceExitWatchdog 的外部杀手（ps1 flag/心跳/deadline 三分支）兜底终结进程。</p>
  */
 @SideOnly(Side.CLIENT)
 public final class ExitWatchdog {
@@ -206,8 +214,13 @@ public final class ExitWatchdog {
             try {
                 FMLCommonHandler.instance().exitJava(0, false);
             } catch (Throwable t2) {
-                log("FMLCommonHandler.exitJava failed (" + t2 + "), last resort: direct Runtime.halt (may be FML-redirected to System.exit)");
-                Runtime.getRuntime().halt(0);
+                // t15 (T4-F3)：末档不再直调 Runtime.halt——FML 已在类加载期把本类
+                // 该调用点改写为 System.exit（走 shutdown hooks），钩子卡死时永不
+                // 返回，恰好制造「窗口消失但进程残留」的场景（fml 日志
+                // "REROUTING TO FML" 实锤）。末档失效就明说，交给外部杀手
+                // （ForceExitWatchdog 的 ps1：flag/心跳/deadline 三分支兜底）。
+                log("FMLCommonHandler.exitJava failed (" + t2
+                    + "), all in-process exit paths exhausted — relying on the external killer (ForceExitWatchdog ps1) to terminate the process");
             }
         }
     }

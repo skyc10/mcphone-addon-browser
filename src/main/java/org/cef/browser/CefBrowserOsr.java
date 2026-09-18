@@ -90,6 +90,11 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
     // idle. Same trick as upstream MCEF.
     private CefMouseEvent lastMouseEvent = new CefMouseEvent(CefMouseEvent.MOUSE_MOVED, 0, 0, 0, 0, 0);
 
+    /** T8/E4（48-t8-click-report §4 → t7 落盘）：按钮按下窗口计数
+     *  （injectMouseButton pressed+1 / release-1）；>0 = mod 侧 press 与
+     *  release 之间，mcefUpdate() 跳过 stale MOVED 重发。 */
+    private volatile int mcefBtnHoldDepth = 0;
+
     // Addon key presses that arrive as chars; the release path needs the
     // matching char again (historical MCEF "WORST_HACK").
     private static final HashMap<Integer, Character> WORST_HACK = new HashMap<>();
@@ -376,7 +381,13 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
         //So sadly this is the only way I could get around the "youtube not rendering video if the mouse doesn't move bug"
         //Even the test browser from the original JCEF library doesn't fix this...
         //What I hope, however, is that it doesn't redraw the entire browser... otherwise I could just call "invalidate"
-        sendMouseEvent(lastMouseEvent);
+        // T8/E4：按钮按下窗口内跳过 stale MOVED 重发。press→release 之间每帧
+        // 重发的「无按钮掩码 MOVED」穿进 press/release 序列，可能干扰 Chromium
+        // 的按钮状态/drag 判定；窗口外保持原行为（youtube 空闲帧推进 workaround
+        // 不受影响）。被跳过的事件与上一条已发送的 MOVED 内容逐字段相同，跳过
+        // 无坐标/信息丢失（依据 48-t8-click-report.md §4）。
+        if (mcefBtnHoldDepth == 0)
+            sendMouseEvent(lastMouseEvent);
     }
 
     @Override
@@ -482,6 +493,11 @@ public class CefBrowserOsr extends CefBrowser_N implements CefRenderHandler, IBr
 
         CefMouseEvent ev = new CefMouseEvent(pressed ? GLFW.GLFW_PRESS : GLFW.GLFW_RELEASE, x, y, ccnt, glfwBtn, m);
         sendMouseEvent(ev);
+        // T8/E4：维护按钮按下窗口
+        if (pressed)
+            mcefBtnHoldDepth++;              // 进入按钮按下窗口
+        else if (mcefBtnHoldDepth > 0)
+            mcefBtnHoldDepth--;              // 退出；防御式递减，不配对也不会 <0
     }
 
     @Override

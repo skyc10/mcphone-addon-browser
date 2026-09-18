@@ -51,6 +51,17 @@ public class BrowserScreen extends GuiScreen {
     private long lastUrlSync;
     private boolean lastInPage;
     private int pressedCefBtn = -1;
+    // T8/C6：活动 press 的原始注入坐标——initGui/onGuiClosed 兜底释放与
+    // 「未配对 press 补发」诊断日志使用；配对释放后仅作诊断残留，无行为影响。
+    private int pressedGuiX, pressedGuiY, pressedCefX, pressedCefY;
+    // T8/C6 防御计数：press 注入前发现上一击未配对时，已补发 release 的次数。
+    private int staleRescueCount;
+    /** 补发 rescue 日志只打一次（罕见事件，默认开——直接佐证 C6 是否真实发生）。 */
+    private boolean rescueDiagDone;
+    // T8 导航后首点一次性诊断：armed 于 create 与每次 drawScreen 观测到 URL 变化；
+    // 预算 2 行/实例（page1 基线 + 导航后首点各一），绝不刷屏。
+    private boolean navClickDiag;
+    private int navClickDiagBudget = 2;
     private boolean clickDiagDone; // 首次页面点击诊断日志只打一次
     /** 瞬时通知（下载/收藏反馈）：CEF 回调线程只写 volatile，主线程绘制。 */
     private static volatile String sPendingNotice;
@@ -219,11 +230,19 @@ public class BrowserScreen extends GuiScreen {
                     // OSR 浏览器必须显式获焦，否则页面内点击/键盘输入可能被 CEF 忽略
                     // （上游 JCEF 在 createBrowserIfRequired 里同样补 setFocus(true)）
                     browser.setFocus(true);
+                    navClickDiag = true; // T8：初始加载也是一次导航——arm 首点诊断（page1 基线）
                 }
             }
         } else {
             BrowserHandle b = browser;
             if (b != null) {
+                // T8/C6 兜底：resize 触发的 initGui 重入时，清掉可能滞留的未配对
+                // press（先补发一次 release 再复位；守卫内才触发，正常路径无注入）。
+                if (pressedCefBtn != -1) {
+                    b.injectMouseButton(pressedCefX, pressedCefY,
+                        toAwtMask(pressedCefBtn) | awtModifiers(), pressedCefBtn, false, 1);
+                    pressedCefBtn = -1;
+                }
                 computeCefSize();
                 b.resize(cefW, cefH);
             }
@@ -239,6 +258,14 @@ public class BrowserScreen extends GuiScreen {
         }
         BrowserHandle b = browser;
         if (b != null) {
+            // T8/C6 兜底：GUI 关闭时若尚有未配对的 press（mouseMovedOrUp 因故未
+            // 到达），先补发一次 release 再关闭，防止按钮状态语义上悬着
+            // （其后的 close 会销毁内核侧状态，补发本身无害）。
+            if (pressedCefBtn != -1) {
+                b.injectMouseButton(pressedCefX, pressedCefY,
+                    toAwtMask(pressedCefBtn) | awtModifiers(), pressedCefBtn, false, 1);
+                pressedCefBtn = -1;
+            }
             browser = null;
             b.close();
         }
@@ -341,6 +368,7 @@ public class BrowserScreen extends GuiScreen {
             String cur = b.getURL();
             if (cur != null && !cur.isEmpty() && !cur.equals(addrField.getText())) {
                 addrField.setText(cur);
+                navClickDiag = true; // T8：观测到 URL 变化=一次导航，arm 下一次首点诊断
             }
         }
         addrField.updateCursorCounter();
@@ -636,10 +664,54 @@ public class BrowserScreen extends GuiScreen {
             // setFocus 很可能被丢弃——CEF 无焦点时点击/键盘事件被整体忽略
             // （「页面点了没反应」主嫌疑）。点击瞬间补一次，成本可忽略。
             b.setFocus(true);
-            pressedCefBtn = toAwtButton(btn);
             int cx = cefX(mx);
             int cy = cefY(my);
+            // T8/C6 防御（43 报告 §5 C6 行）：上一击的 release 若因故未配对
+            // （mouseMovedOrUp 未到达），pressedCefBtn 滞留 → Chromium 认该键仍
+            // 按下 → 本次 mousedown 被当 drag/重复按吞掉。press 之前先补发一次
+            // release 兜底；守卫内才触发，正常路径零额外开销、无语义副作用。
+            int stale = pressedCefBtn;
+            if (stale != -1) {
+                b.injectMouseButton(pressedCefX, pressedCefY,
+                    toAwtMask(stale) | awtModifiers(), stale, false, 1);
+                staleRescueCount++;
+                pressedCefBtn = -1;
+                if (!rescueDiagDone) {
+                    rescueDiagDone = true;
+                    System.out.println("[mcphone_browser] stale press rescued: leaked btn="
+                        + stale + " pressed_at gui=(" + pressedGuiX + "," + pressedGuiY
+                        + ") cef=(" + pressedCefX + "," + pressedCefY
+                        + ") release_resent_at cef=(" + cx + "," + cy
+                        + ") total_rescues=" + staleRescueCount);
+                }
+            }
+            pressedCefBtn = toAwtButton(btn);
+            pressedGuiX = mx;
+            pressedGuiY = my;
+            pressedCefX = cx;
+            pressedCefY = cy;
             int mask = toAwtMask(pressedCefBtn);
+            // T8：导航后首点一次性诊断（默认开，预算 2 行/实例）——字段供
+            // 43 报告 §4 E1-E6 判读：press 是否注入、坐标/视口是否正确、
+            // 是否是「补发 release」救了这次点击
+            if (navClickDiag && navClickDiagBudget > 0) {
+                navClickDiag = false;
+                navClickDiagBudget--;
+                String cur = b.getURL();
+                System.out.println("[mcphone_browser] first post-nav click: url="
+                    + ((cur != null && !cur.isEmpty()) ? cur : "n/a")
+                    + " gui=(" + mx + "," + my + ")"
+                    + " page=(" + (mx - boxX()) + "," + (my - boxY()) + ")"
+                    + " cef=(" + cx + "," + cy + ")"
+                    + " pressedBtn=" + pressedCefBtn
+                    + " stalePressedBtn=" + stale
+                    + " rescued=" + (stale != -1)
+                    + " clickCount=1"
+                    + " mods=" + (mask | awtModifiers())
+                    + " viewport=" + cefW + "x" + cefH
+                    + " actualViewport=" + b.cefViewWidth() + "x" + b.cefViewHeight()
+                    + " hasFocus=" + b.diagHasFocus());
+            }
             // 一次性点击诊断（R0 默认关，-Dmcphone_browser.diag 开启）：确认坐标
             // 缩放与按钮掩码真实到达 CEF
             if (!clickDiagDone && net.montoyo.mcef.client.ClientProxy.DIAG) {
@@ -688,8 +760,13 @@ public class BrowserScreen extends GuiScreen {
         lastInPage = over;
         int wheel = Mouse.getEventDWheel();
         if (wheel != 0 && over) {
-            // Java MouseWheelEvent：rotation 正值=向下；MC 正值=向上
-            int rotation = wheel > 0 ? -1 : 1;
+            // 符号口径（t2 取证，roadmap-2026-09/42 §1 推导链，勿改回）：
+            // LWJGL2 Mouse.getEventDWheel() 正=滚轮向上；cefclient OSR 官方样例
+            // 原样直通不改号，native 层读 getUnitsToScroll()=amount×delta 直灌
+            // Blink ⇒ CEF/Blink deltaY 正=向上。故 rotation 与 getEventDWheel()
+            // 同号（正值=向上滚）。初版 `wheel > 0 ? -1 : 1` 系被 java.awt
+            // MouseWheelEvent「rotation 正值=向下」误导，是全仓滚轮反向的唯一翻转层。
+            int rotation = wheel > 0 ? 1 : -1;
             // 一次性滚轮诊断（R0 默认关，-Dmcphone_browser.diag 开启）：滚轮同样
             // 携带坐标，若滚轮有效而点击无效则坐标缩放假设不成立
             if (!wheelDiagDone && net.montoyo.mcef.client.ClientProxy.DIAG) {

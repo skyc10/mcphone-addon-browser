@@ -85,6 +85,25 @@ boolean isPageLoading();                             // modern 新增
 > `injectKeyReleasedByKeyCode` / `isPageLoading`，**不再声明** `injectKeyPressed(char,int)` /
 > `injectKeyReleased(char,int)`（legacy 16 方法 → modern 17 方法）。
 
+### C-a.3b `injectMouseWheel` deltaY 符号口径（v1.1 补冻，t2 取证定案）
+
+```java
+void injectMouseWheel(int x, int y, int modifiers, int scrollAmount, int rotation);
+// 消费方约定：rotation 与 LWJGL2 Mouse.getEventDWheel() 同号 —— 正 = 向上滚。
+// scrollAmount 消费方按一格钳制 120（精滚轮/触摸板 tick 值不稳，不透传原始 dwheel）。
+```
+
+- **推导链**：LWJGL2 `getEventDWheel()` 正=滚轮向上 → 消费方直通同号 → `CefMouseWheelEvent`
+  `delta=rotation`、`amount=120` → native 读 `getUnitsToScroll()=amount×delta` 原样直灌
+  → `SendMouseWheelEvent(deltaY=120×rotation)` → **CEF/Blink deltaY 正=向上**。
+- **不翻转**：cefclient OSR 官方样例、老 MCEF ec2fbec、ccbluex、cinemamod 全部直通不改号，
+  本仓历史上不存在第二种相反写法。唯一的翻转曾写死在两附属 UI 层
+  （`wheel > 0 ? -1 : 1`，browser 2d73b54 / wiki 初版），已按 t2 更正为同号直通
+  （`wheel > 0 ? 1 : -1`）；系被 java.awt `MouseWheelEvent`「rotation 正值=向下」误导。
+- **勿改回**：任何「再取反修方向」的冲动应先复跑 42-wheel-direction-analysis.md §3
+  的 cdp_bisect.py wheel 探针（修后上滚应回 `[120]`）。
+- **历史证据**：`git log -S 'wheel > 0 ? -1 : 1' --all` 仅两附属初版各一条引入记录（此后从未改过）。
+
 ### C-a.4 回调/访问者接口（javap 核实）
 
 ```java
@@ -280,3 +299,4 @@ CI 挂法：browser 发版工作流可在 tag 构建后对**产物 jar**自检�
 | 版本 | 日期 | 内容 | 依据提交 |
 |---|---|---|---|
 | v1.0 | 2026-09-15 | 首次冻结：C-a…C-f + tools/mcef-contract-check.sh | feat/modern-mcef-port @ `67c371a` |
+| v1.1 | 2026-09-18 | C-a.3b：`injectMouseWheel` deltaY 符号口径（正=向上，与 `getEventDWheel()` 同号）+ amount=120 钳制约定；依据 t2 取证 42-wheel-direction-analysis.md | t7 @ 滚轮方向修正 |
